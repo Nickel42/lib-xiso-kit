@@ -133,9 +133,24 @@ public static class Lz4Block
             }
 
             int from = op - offset;
-            for (int i = 0; i < matchLength; i++)
+            if (offset >= matchLength)
             {
-                destination[op + i] = destination[from + i]; // byte-wise: overlaps are legal
+                destination.Slice(from, matchLength).CopyTo(destination[op..]);
+            }
+            else if (offset == 1)
+            {
+                destination.Slice(op, matchLength).Fill(destination[from]); // run of one byte (zero filler)
+            }
+            else
+            {
+                // An overlapping match repeats the last `offset` bytes. Copy in growing non-overlapping
+                // steps; each step is a multiple of `offset`, so the pattern stays in phase.
+                for (int done = 0; done < matchLength;)
+                {
+                    int step = Math.Min(op + done - from, matchLength - done);
+                    destination.Slice(from, step).CopyTo(destination[(op + done)..]);
+                    done += step;
+                }
             }
             op += matchLength;
         }

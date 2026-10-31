@@ -1,19 +1,21 @@
 using System.Buffers;
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Xml;
 using System.Xml.Linq;
 
 namespace NoIntrovert.XboxIso.Identity;
 
-/// <summary>Table-driven CRC-32 (IEEE 802.3), as used by Redump/No-Intro DATs.</summary>
+/// <summary>Table-driven CRC-32 (IEEE 802.3), as used by Redump/No-Intro DATs. Slicing-by-8: eight table lookups per 8 bytes.</summary>
 public sealed class Crc32
 {
     private static readonly uint[] Table = BuildTable();
     private uint _crc = 0xFFFFFFFF;
 
+    /// <summary>Eight 256-entry tables back to back; table k advances the CRC over k extra zero bytes.</summary>
     private static uint[] BuildTable()
     {
-        var t = new uint[256];
+        var t = new uint[8 * 256];
         for (uint i = 0; i < 256; i++)
         {
             uint c = i;
@@ -23,15 +25,34 @@ public sealed class Crc32
             }
             t[i] = c;
         }
+        for (int i = 0; i < 256; i++)
+        {
+            for (int k = 1; k < 8; k++)
+            {
+                uint prev = t[(k - 1) * 256 + i];
+                t[k * 256 + i] = (prev >> 8) ^ t[prev & 0xFF];
+            }
+        }
         return t;
     }
 
     public void Append(ReadOnlySpan<byte> data)
     {
         uint crc = _crc;
+        var t = Table;
+        while (data.Length >= 8)
+        {
+            uint one = BinaryPrimitives.ReadUInt32LittleEndian(data) ^ crc;
+            uint two = BinaryPrimitives.ReadUInt32LittleEndian(data[4..]);
+            crc = t[7 * 256 + (one & 0xFF)] ^ t[6 * 256 + ((one >> 8) & 0xFF)] ^
+                  t[5 * 256 + ((one >> 16) & 0xFF)] ^ t[4 * 256 + (one >> 24)] ^
+                  t[3 * 256 + (two & 0xFF)] ^ t[2 * 256 + ((two >> 8) & 0xFF)] ^
+                  t[1 * 256 + ((two >> 16) & 0xFF)] ^ t[two >> 24];
+            data = data[8..];
+        }
         foreach (byte b in data)
         {
-            crc = Table[(crc ^ b) & 0xFF] ^ (crc >> 8);
+            crc = t[(crc ^ b) & 0xFF] ^ (crc >> 8);
         }
         _crc = crc;
     }
@@ -56,7 +77,10 @@ public sealed record FileHashes(long Size, string Crc32, string Md5, string Sha1
         var crc = new Crc32();
         using var md5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
         using var sha1 = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
-        byte[] buffer = ArrayPool<byte>.Shared.Rent(4 << 20);
+        // Double-buffered: the next chunk is read while the three hashes run side by side on the current one.
+        byte[] reading = ArrayPool<byte>.Shared.Rent(4 << 20);
+        byte[] hashingBuffer = ArrayPool<byte>.Shared.Rent(4 << 20);
+        Task hashing = Task.CompletedTask;
         long done = 0;
         var throttled = new ThrottledProgress(progress);
         try
@@ -64,14 +88,21 @@ public sealed record FileHashes(long Size, string Crc32, string Md5, string Sha1
             foreach (var file in files)
             {
                 using var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, FileOptions.SequentialScan);
-                int n;
-                while ((n = fs.Read(buffer, 0, buffer.Length)) > 0)
+                while (true)
                 {
+                    int n = fs.Read(reading, 0, reading.Length);
+                    hashing.GetAwaiter().GetResult();
+                    if (n <= 0)
+                    {
+                        break;
+                    }
                     cancellationToken.ThrowIfCancellationRequested();
-                    var span = buffer.AsSpan(0, n);
-                    crc.Append(span);
-                    md5.AppendData(span);
-                    sha1.AppendData(span);
+                    (reading, hashingBuffer) = (hashingBuffer, reading);
+                    byte[] chunk = hashingBuffer;
+                    hashing = Task.Run(() => Parallel.Invoke(
+                        () => crc.Append(chunk.AsSpan(0, n)),
+                        () => md5.AppendData(chunk, 0, n),
+                        () => sha1.AppendData(chunk, 0, n)));
                     done += n;
                     throttled.Report(new OperationProgress(OperationStage.Hashing, done, total, file));
                 }
@@ -79,7 +110,16 @@ public sealed record FileHashes(long Size, string Crc32, string Md5, string Sha1
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(buffer);
+            try
+            {
+                hashing.Wait();
+            }
+            catch (AggregateException)
+            {
+                // Already failing; the buffers just must not be returned while still in use.
+            }
+            ArrayPool<byte>.Shared.Return(reading);
+            ArrayPool<byte>.Shared.Return(hashingBuffer);
         }
         return new FileHashes(
             done,

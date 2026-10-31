@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Runtime.ExceptionServices;
 using NoIntrovert.XboxIso.IO;
 using Microsoft.Win32.SafeHandles;
 
@@ -15,6 +16,96 @@ public static class CompressedFormats
 
     /// <summary>Default split size for byte-split CSO parts (sector aligned, below the FATX 4 GiB limit).</summary>
     public const long CsoSplitPoint = 0xFFBF6000;
+}
+
+/// <summary>
+/// Shared read path for CCI and CSO. Stored blocks are written back to back, so a run of sectors is
+/// fetched with one read and then decoded in parallel, instead of one read and one decode per 2 KiB sector.
+/// </summary>
+internal static class SectorBatch
+{
+    /// <summary>Most sectors fetched per batch (4 MiB of output).</summary>
+    public const int MaxSectors = 2048;
+
+    /// <summary>Smaller batches are decoded on the calling thread.</summary>
+    private const int ParallelThreshold = 64;
+    private const int SectorsPerTask = 64;
+
+    public delegate void BlockDecoder(ReadOnlySpan<byte> stored, bool compressed, Span<byte> output);
+
+    /// <summary>File offset of the block that <paramref name="entry"/> points at.</summary>
+    public static long Offset(uint entry, int alignment) => (long)(entry & 0x7FFFFFFF) << alignment;
+
+    /// <summary>
+    /// Decodes <paramref name="count"/> sectors starting at index entry <paramref name="first"/>.
+    /// <paramref name="stored"/> holds the file bytes from <paramref name="baseOffset"/> to the end of the last block.
+    /// </summary>
+    public static void Decode(byte[] stored, int storedLength, uint[] index, long first, int count, int alignment, long baseOffset, byte[] output, BlockDecoder decoder)
+    {
+        void DecodeRange(int from, int to)
+        {
+            for (int i = from; i < to; i++)
+            {
+                uint entry = index[first + i];
+                long start = Offset(entry, alignment) - baseOffset;
+                long end = Offset(index[first + i + 1], alignment) - baseOffset;
+                if (start < 0 || end < start || end > storedLength)
+                {
+                    throw new InvalidDataException("Corrupt compressed image index entry.");
+                }
+                decoder(stored.AsSpan((int)start, (int)(end - start)), (entry & 0x80000000) != 0,
+                    output.AsSpan(i * CompressedFormats.BlockSize, CompressedFormats.BlockSize));
+            }
+        }
+
+        if (count < ParallelThreshold)
+        {
+            DecodeRange(0, count);
+            return;
+        }
+        try
+        {
+            int tasks = (count + SectorsPerTask - 1) / SectorsPerTask;
+            Parallel.For(0, tasks, t => DecodeRange(t * SectorsPerTask, Math.Min(count, (t + 1) * SectorsPerTask)));
+        }
+        catch (AggregateException ae) when (ae.InnerExceptions.Count > 0)
+        {
+            ExceptionDispatchInfo.Throw(ae.InnerExceptions[0]); // keep the same exception types as the serial path
+        }
+    }
+
+    /// <summary>
+    /// Serves a logical read by fetching whole sectors in batches through <paramref name="readSectors"/>,
+    /// which may return fewer sectors than asked (e.g. at a part boundary) but at least one.
+    /// </summary>
+    public static int Read(long position, Span<byte> buffer, long length, Func<long, int, byte[], int> readSectors)
+    {
+        const int bs = CompressedFormats.BlockSize;
+        int total = 0;
+        long sectorCount = length / bs;
+        int capacity = (int)Math.Min(MaxSectors, ((long)buffer.Length + bs - 1) / bs + 1);
+        byte[] decoded = ArrayPool<byte>.Shared.Rent(capacity * bs);
+        try
+        {
+            while (buffer.Length > 0 && position < length)
+            {
+                long sector = position / bs;
+                int within = (int)(position % bs);
+                int want = (int)Math.Min(Math.Min(((long)within + buffer.Length + bs - 1) / bs, capacity), sectorCount - sector);
+                int got = readSectors(sector, want, decoded);
+                int n = (int)Math.Min(buffer.Length, (long)got * bs - within);
+                decoded.AsSpan(within, n).CopyTo(buffer);
+                buffer = buffer[n..];
+                position += n;
+                total += n;
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(decoded);
+        }
+        return total;
+    }
 }
 
 /// <summary>Reads Cerbios Compressed Images (<c>.cci</c>), including split sets where each part has its own header.</summary>
@@ -100,34 +191,10 @@ public sealed class CciSource : ImageSource
 
     public override ContainerFormat Format => ContainerFormat.Cci;
 
-    public override int Read(long position, Span<byte> buffer)
-    {
-        int total = 0;
-        byte[] sectorBuf = ArrayPool<byte>.Shared.Rent(CompressedFormats.BlockSize);
-        byte[] blockBuf = ArrayPool<byte>.Shared.Rent(CompressedFormats.BlockSize * 2);
-        try
-        {
-            while (buffer.Length > 0 && position < _length)
-            {
-                long sector = position / CompressedFormats.BlockSize;
-                int within = (int)(position % CompressedFormats.BlockSize);
-                ReadSector(sector, sectorBuf.AsSpan(0, CompressedFormats.BlockSize), blockBuf);
-                int n = Math.Min(buffer.Length, CompressedFormats.BlockSize - within);
-                sectorBuf.AsSpan(within, n).CopyTo(buffer);
-                buffer = buffer[n..];
-                position += n;
-                total += n;
-            }
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(sectorBuf);
-            ArrayPool<byte>.Shared.Return(blockBuf);
-        }
-        return total;
-    }
+    public override int Read(long position, Span<byte> buffer) => SectorBatch.Read(position, buffer, _length, ReadSectors);
 
-    private void ReadSector(long sector, Span<byte> output, byte[] blockBuf)
+    /// <summary>Decodes up to <paramref name="count"/> sectors from one part into <paramref name="output"/>.</summary>
+    private int ReadSectors(long sector, int count, byte[] output)
     {
         Part? part = null;
         foreach (var p in _parts)
@@ -144,29 +211,48 @@ public sealed class CciSource : ImageSource
         }
 
         long local = sector - part.FirstSector;
-        uint entry = part.Index[local];
-        long start = (long)(entry & 0x7FFFFFFF) << part.Alignment;
-        long end = (long)(part.Index[local + 1] & 0x7FFFFFFF) << part.Alignment;
-        int size = checked((int)(end - start));
-        bool compressed = (entry & 0x80000000) != 0;
-
-        if (!compressed && size == CompressedFormats.BlockSize)
-        {
-            if (RandomAccess.Read(part.Handle, output, start) != output.Length)
-            {
-                throw new EndOfStreamException("Truncated CCI block.");
-            }
-            return;
-        }
-
-        if (size <= 0 || size > blockBuf.Length)
+        count = (int)Math.Min(count, part.SectorCount - local);
+        long start = SectorBatch.Offset(part.Index[local], part.Alignment);
+        long end = SectorBatch.Offset(part.Index[local + count], part.Alignment);
+        long size = end - start;
+        if (size <= 0 || size > (long)count * CompressedFormats.BlockSize * 2)
         {
             throw new InvalidDataException("Corrupt CCI index entry.");
         }
-        var block = blockBuf.AsSpan(0, size);
-        if (RandomAccess.Read(part.Handle, block, start) != size)
+
+        byte[] stored = ArrayPool<byte>.Shared.Rent((int)size);
+        try
         {
-            throw new EndOfStreamException("Truncated CCI block.");
+            for (int done = 0; done < size;)
+            {
+                int n = RandomAccess.Read(part.Handle, stored.AsSpan(done, (int)size - done), start + done);
+                if (n <= 0)
+                {
+                    throw new EndOfStreamException("Truncated CCI block.");
+                }
+                done += n;
+            }
+            SectorBatch.Decode(stored, (int)size, part.Index, local, count, part.Alignment, start, output, DecodeBlock);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(stored);
+        }
+        return count;
+    }
+
+    private static void DecodeBlock(ReadOnlySpan<byte> block, bool compressed, Span<byte> output)
+    {
+        int size = block.Length;
+        if (!compressed && size == CompressedFormats.BlockSize)
+        {
+            block.CopyTo(output);
+            return;
+        }
+
+        if (size <= 0 || size > CompressedFormats.BlockSize * 2)
+        {
+            throw new InvalidDataException("Corrupt CCI index entry.");
         }
         int padding = block[0];
         int payload = size - 1 - padding;
@@ -240,52 +326,49 @@ public sealed class CsoSource : ImageSource
 
     public override ContainerFormat Format => ContainerFormat.Cso;
 
-    public override int Read(long position, Span<byte> buffer)
-    {
-        int total = 0;
-        byte[] sectorBuf = ArrayPool<byte>.Shared.Rent(_blockSize);
-        byte[] blockBuf = ArrayPool<byte>.Shared.Rent(_blockSize * 2);
-        try
-        {
-            while (buffer.Length > 0 && position < _length)
-            {
-                long sector = position / _blockSize;
-                int within = (int)(position % _blockSize);
-                ReadSector(sector, sectorBuf.AsSpan(0, _blockSize), blockBuf);
-                int n = Math.Min(buffer.Length, _blockSize - within);
-                sectorBuf.AsSpan(within, n).CopyTo(buffer);
-                buffer = buffer[n..];
-                position += n;
-                total += n;
-            }
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(sectorBuf);
-            ArrayPool<byte>.Shared.Return(blockBuf);
-        }
-        return total;
-    }
+    public override int Read(long position, Span<byte> buffer) => SectorBatch.Read(position, buffer, _length, ReadSectors);
 
-    private void ReadSector(long sector, Span<byte> output, byte[] blockBuf)
+    /// <summary>Decodes <paramref name="count"/> sectors into <paramref name="output"/>. Split parts are handled by the concatenated source.</summary>
+    private int ReadSectors(long sector, int count, byte[] output)
     {
-        uint entry = _index[sector];
-        long start = (long)(entry & 0x7FFFFFFF) << _alignment;
-        bool compressed = (entry & 0x80000000) != 0;
-        if (!compressed)
-        {
-            _raw.ReadExactly(start, output);
-            return;
-        }
-
-        long end = (long)(_index[sector + 1] & 0x7FFFFFFF) << _alignment;
-        int size = checked((int)(end - start));
-        if (size < 4 || size > blockBuf.Length)
+        long start = SectorBatch.Offset(_index[sector], _alignment);
+        long end = SectorBatch.Offset(_index[sector + count], _alignment);
+        long size = end - start;
+        if (size <= 0 || size > (long)count * _blockSize * 2)
         {
             throw new InvalidDataException("Corrupt CSO index entry.");
         }
-        var block = blockBuf.AsSpan(0, size);
-        _raw.ReadExactly(start, block);
+
+        byte[] stored = ArrayPool<byte>.Shared.Rent((int)size);
+        try
+        {
+            _raw.ReadExactly(start, stored.AsSpan(0, (int)size));
+            SectorBatch.Decode(stored, (int)size, _index, sector, count, _alignment, start, output, DecodeBlock);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(stored);
+        }
+        return count;
+    }
+
+    private static void DecodeBlock(ReadOnlySpan<byte> block, bool compressed, Span<byte> output)
+    {
+        int size = block.Length;
+        if (!compressed)
+        {
+            if (size < output.Length)
+            {
+                throw new InvalidDataException("Corrupt CSO index entry.");
+            }
+            block[..output.Length].CopyTo(output);
+            return;
+        }
+
+        if (size < 4 || size > CompressedFormats.BlockSize * 2)
+        {
+            throw new InvalidDataException("Corrupt CSO index entry.");
+        }
         uint blockLen = BinaryPrimitives.ReadUInt32LittleEndian(block);
         bool storedRaw = (blockLen & 0x80000000) != 0; // LZ4 frame "uncompressed block" flag
         int len = (int)(blockLen & 0x7FFFFFFF);

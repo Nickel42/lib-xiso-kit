@@ -248,6 +248,9 @@ public static class XisoBuilder
 
     private static void HashFiles(List<XisoBuildNode> files, IProgress<OperationProgress>? progress, CancellationToken ct)
     {
+        // Only files that share their size with another file can be duplicates; the rest keep no
+        // ContentKey and are laid out normally, so there is no need to read them.
+        files = files.GroupBy(f => f.Size).Where(g => g.Count() > 1).SelectMany(g => g).ToList();
         long total = files.Sum(f => f.Size);
         long done = 0;
         var buffer = new byte[1 << 20];

@@ -28,6 +28,7 @@ public static class ImageWriter
 {
     private const int SectorSize = CompressedFormats.BlockSize;
     private const int ChunkSectors = 2048; // 4 MiB per batch
+    private const int MaxBlock = SectorSize * 2;
 
     /// <summary>Conventional file extension for a format.</summary>
     public static string ExtensionFor(OutputFormat format) => format switch
@@ -60,36 +61,135 @@ public static class ImageWriter
         };
     }
 
-    private static WriteResult WriteIso(ImageSource image, string outputPath, long? splitSize, bool overwrite, IProgress<OperationProgress> progress, CancellationToken ct)
+    /// <summary>Compressed form of one sector (or -1 when it should be stored raw).</summary>
+    private delegate int Encoder(ReadOnlySpan<byte> sector, Span<byte> scratch, Span<byte> block);
+
+    /// <summary>One batch of input sectors and, when compressing, their encoded blocks.</summary>
+    private sealed class Chunk : IDisposable
     {
-        using var writer = new SplitFileWriter(outputPath, splitSize, overwrite);
-        using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
-        byte[] buffer = ArrayPool<byte>.Shared.Rent(ChunkSectors * SectorSize);
+        public readonly byte[] Raw = ArrayPool<byte>.Shared.Rent(ChunkSectors * SectorSize);
+        public readonly byte[]? Blocks;
+        public readonly int[] Lengths = new int[ChunkSectors];
+        public int Count;
+        public int Bytes;
+
+        public Chunk(bool compressed) => Blocks = compressed ? ArrayPool<byte>.Shared.Rent(ChunkSectors * MaxBlock) : null;
+
+        public ReadOnlySpan<byte> Data(int i) => Lengths[i] > 0
+            ? Blocks.AsSpan(i * MaxBlock, Lengths[i])
+            : Raw.AsSpan(i * SectorSize, SectorSize);
+
+        public void Dispose()
+        {
+            ArrayPool<byte>.Shared.Return(Raw);
+            if (Blocks is not null)
+            {
+                ArrayPool<byte>.Shared.Return(Blocks);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Streams the image through <paramref name="consume"/> one chunk at a time. The next chunk is read
+    /// (and compressed, when <paramref name="encoder"/> is set) on a worker while the current one is consumed,
+    /// so reading, compressing and writing overlap instead of taking turns.
+    /// </summary>
+    private static void ForEachChunk(ImageSource image, Encoder? encoder, CancellationToken ct, Action<Chunk, long> consume)
+    {
+        long sectorCount = image.Length / SectorSize;
+        if (sectorCount == 0)
+        {
+            return;
+        }
+
+        using var a = new Chunk(encoder is not null);
+        using var b = new Chunk(encoder is not null);
+        Task? pending = null;
+        Task Load(Chunk c, long sector) => Task.Run(() =>
+        {
+            ct.ThrowIfCancellationRequested();
+            c.Count = (int)Math.Min(ChunkSectors, sectorCount - sector);
+            c.Bytes = c.Count * SectorSize;
+            image.ReadExactly(sector * SectorSize, c.Raw.AsSpan(0, c.Bytes));
+            if (encoder is not null)
+            {
+                Parallel.For(0, c.Count, () => new byte[Lz4Block.MaxCompressedLength(SectorSize)], (i, _, scratch) =>
+                {
+                    c.Lengths[i] = encoder(c.Raw.AsSpan(i * SectorSize, SectorSize), scratch, c.Blocks.AsSpan(i * MaxBlock, MaxBlock));
+                    return scratch;
+                }, _ => { });
+            }
+        });
+
         try
         {
-            long pos = 0;
-            while (pos < image.Length)
+            Chunk current = a, next = b;
+            long sector = 0;
+            pending = Load(current, 0);
+            while (true)
             {
+                pending.GetAwaiter().GetResult();
+                pending = null;
+                long first = sector;
+                sector += current.Count;
+                if (sector < sectorCount)
+                {
+                    pending = Load(next, sector);
+                }
                 ct.ThrowIfCancellationRequested();
-                int n = (int)Math.Min(ChunkSectors * SectorSize, image.Length - pos);
-                image.ReadExactly(pos, buffer.AsSpan(0, n));
-                sha.AppendData(buffer, 0, n);
-                writer.Write(pos, buffer.AsSpan(0, n));
-                pos += n;
-                progress.Report(new OperationProgress(OperationStage.Writing, pos, image.Length));
+                consume(current, first);
+                if (pending is null)
+                {
+                    break;
+                }
+                (current, next) = (next, current);
             }
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(buffer);
+            // The worker may still be filling a buffer; wait before the buffers go back to the pool.
+            if (pending is not null)
+            {
+                try
+                {
+                    pending.Wait();
+                }
+                catch (AggregateException)
+                {
+                    // Already failing or cancelled; the original exception is the one that matters.
+                }
+            }
         }
+    }
+
+    /// <summary>Hashes <paramref name="chunk"/> on a worker while <paramref name="write"/> runs.</summary>
+    private static void HashWhile(IncrementalHash sha, Chunk chunk, Action write)
+    {
+        var hash = Task.Run(() => sha.AppendData(chunk.Raw, 0, chunk.Bytes));
+        try
+        {
+            write();
+        }
+        finally
+        {
+            hash.GetAwaiter().GetResult();
+        }
+    }
+
+    private static WriteResult WriteIso(ImageSource image, string outputPath, long? splitSize, bool overwrite, IProgress<OperationProgress> progress, CancellationToken ct)
+    {
+        using var writer = new SplitFileWriter(outputPath, splitSize, overwrite);
+        using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
+        ForEachChunk(image, null, ct, (c, sector) =>
+        {
+            long pos = sector * SectorSize;
+            HashWhile(sha, c, () => writer.Write(pos, c.Raw.AsSpan(0, c.Bytes)));
+            progress.Report(new OperationProgress(OperationStage.Writing, pos + c.Bytes, image.Length));
+        });
         long written = writer.BytesWritten;
         var files = writer.Complete();
         return new WriteResult(files, image.Length, written, Convert.ToHexString(sha.GetHashAndReset()));
     }
-
-    /// <summary>Compressed form of one sector (or null when it should be stored raw).</summary>
-    private delegate int Encoder(ReadOnlySpan<byte> sector, Span<byte> scratch, Span<byte> block);
 
     private static int EncodeCci(ReadOnlySpan<byte> sector, Span<byte> scratch, Span<byte> block)
     {
@@ -118,20 +218,6 @@ public static class ImageWriter
         return 4 + len;
     }
 
-    /// <summary>Reads a chunk and compresses every sector in parallel. Returns per-sector block lengths (-1 = raw).</summary>
-    private static int CompressChunk(ImageSource image, long pos, int sectors, byte[] raw, byte[] blocks, int[] lengths, Encoder encoder)
-    {
-        int bytes = sectors * SectorSize;
-        image.ReadExactly(pos, raw.AsSpan(0, bytes));
-        int maxBlock = SectorSize * 2;
-        Parallel.For(0, sectors, () => new byte[Lz4Block.MaxCompressedLength(SectorSize)], (i, _, scratch) =>
-        {
-            lengths[i] = encoder(raw.AsSpan(i * SectorSize, SectorSize), scratch, blocks.AsSpan(i * maxBlock, maxBlock));
-            return scratch;
-        }, _ => { });
-        return bytes;
-    }
-
     private static WriteResult WriteCso(ImageSource image, string outputPath, long? splitSize, bool overwrite, IProgress<OperationProgress> progress, CancellationToken ct)
     {
         long sectorCount = image.Length / SectorSize;
@@ -149,48 +235,41 @@ public static class ImageWriter
 
         using var writer = new SplitFileWriter(outputPath, partSize, overwrite);
         using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
-        byte[] raw = ArrayPool<byte>.Shared.Rent(ChunkSectors * SectorSize);
-        byte[] blocks = ArrayPool<byte>.Shared.Rent(ChunkSectors * SectorSize * 2);
-        int[] lengths = new int[ChunkSectors];
-        Span<byte> zeros = stackalloc byte[align];
-        zeros.Clear();
+        // A chunk's blocks are gathered here (with their alignment padding) and written in one call.
+        byte[] staging = ArrayPool<byte>.Shared.Rent(ChunkSectors * (SectorSize + align));
         try
         {
-            long sector = 0;
-            while (sector < sectorCount)
+            ForEachChunk(image, EncodeCso, ct, (c, sector) =>
             {
-                ct.ThrowIfCancellationRequested();
-                int count = (int)Math.Min(ChunkSectors, sectorCount - sector);
-                int bytes = CompressChunk(image, sector * SectorSize, count, raw, blocks, lengths, EncodeCso);
-                sha.AppendData(raw, 0, bytes);
-                for (int i = 0; i < count; i++)
+                long chunkStart = position;
+                int len = 0;
+                for (int i = 0; i < c.Count; i++)
                 {
-                    int misalign = (int)(position & (align - 1));
+                    int misalign = (int)((chunkStart + len) & (align - 1));
                     if (misalign != 0)
                     {
-                        writer.Write(position, zeros[..(align - misalign)]);
-                        position += align - misalign;
+                        staging.AsSpan(len, align - misalign).Clear();
+                        len += align - misalign;
                     }
-                    bool compressed = lengths[i] > 0;
-                    index[sector + i] = (uint)(position >> CompressedFormats.IndexAlignment) | (compressed ? 0x80000000u : 0u);
-                    var data = compressed
-                        ? blocks.AsSpan(i * SectorSize * 2, lengths[i])
-                        : raw.AsSpan(i * SectorSize, SectorSize);
-                    writer.Write(position, data);
-                    position += data.Length;
+                    index[sector + i] = (uint)((chunkStart + len) >> CompressedFormats.IndexAlignment) | (c.Lengths[i] > 0 ? 0x80000000u : 0u);
+                    var data = c.Data(i);
+                    data.CopyTo(staging.AsSpan(len));
+                    len += data.Length;
                 }
-                sector += count;
-                progress.Report(new OperationProgress(OperationStage.Compressing, sector * SectorSize, image.Length));
-            }
+                HashWhile(sha, c, () => writer.Write(chunkStart, staging.AsSpan(0, len)));
+                position = chunkStart + len;
+                progress.Report(new OperationProgress(OperationStage.Compressing, (sector + c.Count) * SectorSize, image.Length));
+            });
+
             // Align the end so the final index entry (end of the last block) is exact.
             int tailMisalign = (int)(position & (align - 1));
             if (tailMisalign != 0)
             {
-                writer.Write(position, zeros[..(align - tailMisalign)]);
+                writer.Write(position, new byte[align - tailMisalign]);
                 position += align - tailMisalign;
             }
             CheckIndexRange(position);
-            index[sectorCount] =(uint)(position >> CompressedFormats.IndexAlignment);
+            index[sectorCount] = (uint)(position >> CompressedFormats.IndexAlignment);
 
             var header = new byte[24 + indexBytes];
             BinaryPrimitives.WriteUInt32LittleEndian(header, CompressedFormats.CsoMagic);
@@ -207,8 +286,7 @@ public static class ImageWriter
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(raw);
-            ArrayPool<byte>.Shared.Return(blocks);
+            ArrayPool<byte>.Shared.Return(staging);
         }
         long written = writer.BytesWritten;
         var files = writer.Complete();
@@ -217,7 +295,6 @@ public static class ImageWriter
 
     private static WriteResult WriteCci(ImageSource image, string outputPath, long? splitSize, bool overwrite, IProgress<OperationProgress> progress, CancellationToken ct)
     {
-        long sectorCount = image.Length / SectorSize;
         long limit = splitSize ?? long.MaxValue;
         string fullOutput = Path.GetFullPath(outputPath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullOutput)!);
@@ -225,9 +302,6 @@ public static class ImageWriter
 
         var created = new List<string>();
         using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
-        byte[] raw = ArrayPool<byte>.Shared.Rent(ChunkSectors * SectorSize);
-        byte[] blocks = ArrayPool<byte>.Shared.Rent(ChunkSectors * SectorSize * 2);
-        int[] lengths = new int[ChunkSectors];
         long totalOnDisk = 0;
         bool success = false;
 
@@ -239,7 +313,7 @@ public static class ImageWriter
         void StartPart()
         {
             string path = splitSize is null ? fullOutput : SplitParts.PartPath(fullOutput, created.Count + 1);
-            part = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 20);
+            part = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 22);
             created.Add(path);
             part.Write(new byte[32]); // header placeholder
             partPos = 32;
@@ -277,36 +351,30 @@ public static class ImageWriter
         try
         {
             StartPart();
-            long sector = 0;
-            while (sector < sectorCount)
+            ForEachChunk(image, EncodeCci, ct, (c, sector) =>
             {
-                ct.ThrowIfCancellationRequested();
-                int count = (int)Math.Min(ChunkSectors, sectorCount - sector);
-                int bytes = CompressChunk(image, sector * SectorSize, count, raw, blocks, lengths, EncodeCci);
-                sha.AppendData(raw, 0, bytes);
-                for (int i = 0; i < count; i++)
+                HashWhile(sha, c, () =>
                 {
-                    bool compressed = lengths[i] > 0;
-                    var data = compressed
-                        ? blocks.AsSpan(i * SectorSize * 2, lengths[i])
-                        : raw.AsSpan(i * SectorSize, SectorSize);
-
-                    // Same rule as Repackinator: start a new part before this block would push past the limit.
-                    long projected = partPos + (partIndex.Count + 2) * 4L + data.Length;
-                    if (projected > limit && partSectors > 0)
+                    for (int i = 0; i < c.Count; i++)
                     {
-                        FinishPart();
-                        StartPart();
-                    }
+                        var data = c.Data(i);
 
-                    partIndex.Add((uint)(partPos >> CompressedFormats.IndexAlignment) | (compressed ? 0x80000000u : 0u));
-                    part!.Write(data);
-                    partPos += data.Length;
-                    partSectors++;
-                }
-                sector += count;
-                progress.Report(new OperationProgress(OperationStage.Compressing, sector * SectorSize, image.Length));
-            }
+                        // Same rule as Repackinator: start a new part before this block would push past the limit.
+                        long projected = partPos + (partIndex.Count + 2) * 4L + data.Length;
+                        if (projected > limit && partSectors > 0)
+                        {
+                            FinishPart();
+                            StartPart();
+                        }
+
+                        partIndex.Add((uint)(partPos >> CompressedFormats.IndexAlignment) | (c.Lengths[i] > 0 ? 0x80000000u : 0u));
+                        part!.Write(data);
+                        partPos += data.Length;
+                        partSectors++;
+                    }
+                });
+                progress.Report(new OperationProgress(OperationStage.Compressing, (sector + c.Count) * SectorSize, image.Length));
+            });
             FinishPart();
 
             if (splitSize is not null && created.Count == 1)
@@ -318,8 +386,6 @@ public static class ImageWriter
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(raw);
-            ArrayPool<byte>.Shared.Return(blocks);
             if (!success)
             {
                 part?.Dispose();

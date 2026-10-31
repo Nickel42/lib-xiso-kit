@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <RootNamespace>NoIntrovert.XboxIso</RootNamespace>
+    <AssemblyName>NoIntrovert.XboxIso</AssemblyName>
+    <Version>1.0.0-rc.1</Version>
+    <Description>Dependency-free library for analysing, trimming, rebuilding and compressing original Xbox disc images (Redump ISO, XISO, CCI, CSO).</Description>
+    <IsTrimmable>true</IsTrimmable>
+    <IsAotCompatible>true</IsAotCompatible>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="NoIntrovert.XboxIso.Tests" />
+  </ItemGroup>
+
+</Project>

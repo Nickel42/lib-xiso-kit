@@ -1,0 +1,33 @@
+{
+  // NoIntrovert.XboxIso rules database.
+  //
+  // Global rules apply to every title; title rules apply when /default.xbe's title ID
+  // (and optionally version) matches. Patterns use GlobMatcher syntax:
+  //   "/Demos/**"            the /Demos folder and everything in it (anchored at the root)
+  //   "Demos/**"             a Demos folder at any depth
+  //   "**/*.xmv"             every .xmv file
+  //
+  // Only mark a rule "verified": true after confirming the trimmed image boots AND that
+  // the game's menus no longer reference the removed content (test on xemu and/or hardware).
+  // Unverified rules are listed in the plan but not applied unless ApplyUnverifiedRules is set.
+  //
+  // The built-in $SystemUpdate rule is always included by the library; it does not need to be here.
+  "version": 1,
+  "global": [],
+  "titles": [
+    // Example shape (not a real verified entry):
+    // {
+    //   "titleId": "4D530004",
+    //   "name": "Example Title",
+    //   "versions": [ "0x2" ],
+    //   "rules": [
+    //     {
+    //       "remove": [ "/Demos/**" ],
+    //       "reason": "Bundled demo discs for other games; not referenced by the main menu.",
+    //       "verified": false,
+    //       "verifiedOn": "xemu 0.8.x"
+    //     }
+    //   ]
+    // }
+  ]
+}

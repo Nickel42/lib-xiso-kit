@@ -1,0 +1,31 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFA8}") = "NoIntrovert.XboxIso", "src\NoIntrovert.XboxIso\NoIntrovert.XboxIso.csproj", "{2720D20D-C4DD-4A87-9748-7F08736F6E99}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFA8}") = "NoIntrovert.XboxIso.Cli", "src\NoIntrovert.XboxIso.Cli\NoIntrovert.XboxIso.Cli.csproj", "{7C3529AA-B3EB-43CB-9223-2D3398EDD5F5}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFA8}") = "NoIntrovert.XboxIso.Tests", "tests\NoIntrovert.XboxIso.Tests\NoIntrovert.XboxIso.Tests.csproj", "{F3638A32-35F3-4A30-A883-9355AD7C9F03}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{2720D20D-C4DD-4A87-9748-7F08736F6E99}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2720D20D-C4DD-4A87-9748-7F08736F6E99}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2720D20D-C4DD-4A87-9748-7F08736F6E99}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2720D20D-C4DD-4A87-9748-7F08736F6E99}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7C3529AA-B3EB-43CB-9223-2D3398EDD5F5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7C3529AA-B3EB-43CB-9223-2D3398EDD5F5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7C3529AA-B3EB-43CB-9223-2D3398EDD5F5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7C3529AA-B3EB-43CB-9223-2D3398EDD5F5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F3638A32-35F3-4A30-A883-9355AD7C9F03}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F3638A32-35F3-4A30-A883-9355AD7C9F03}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F3638A32-35F3-4A30-A883-9355AD7C9F03}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F3638A32-35F3-4A30-A883-9355AD7C9F03}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

@@ -143,4 +143,8 @@ tests/NoIntrovert.XboxIso.Tests/  xunit tests
 rules/                            rules database template
 ```
 
-Formats implemented from public specifications and from reading extract-xiso (BSD-style license), xdvdfs and ciso (MIT), and XboxToolkit (GPL-3.0; read for format details only). No code was copied.
+Formats implemented from public specifications and from reading extract-xiso (BSD-style license), xdvdfs and ciso (MIT), and XboxToolkit (GPL-3.0; read for format details only). No code was copied. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## License
+
+[MIT](LICENSE) © 2026 Nickel42

@@ -17,8 +17,8 @@
     <Authors>Nickel42</Authors>
     <Copyright>Copyright (c) 2026 Nickel42</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/Nickel42/xbox-iso-library</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/Nickel42/xbox-iso-library.git</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/Nickel42/lib-xiso-kit</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Nickel42/lib-xiso-kit.git</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>

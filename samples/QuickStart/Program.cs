@@ -1,10 +1,10 @@
 // The README's example as a program CI compiles on every change.
 // usage: QuickStart <image> <output.cci> [rules.json]
-using XboxIsoLibrary;
-using XboxIsoLibrary.Analysis;
-using XboxIsoLibrary.IO;
-using XboxIsoLibrary.Shrinking;
-using XboxIsoLibrary.Xdvdfs;
+using LibXisoKit;
+using LibXisoKit.Analysis;
+using LibXisoKit.IO;
+using LibXisoKit.Shrinking;
+using LibXisoKit.Xdvdfs;
 
 if (args.Length < 2)
 {
@@ -18,7 +18,7 @@ Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 var progress = new Progress<OperationProgress>(p => Console.Write($"\r{p.Stage}: {(p.Fraction ?? 0):P0}   "));
 
 // Open any supported image: Redump ISO, XISO, split .1.iso/.2.iso, CCI or CSO.
-using var shrinker = await XboxIsoShrinker.OpenAsync(input, cts.Token);
+using var shrinker = await XisoShrinker.OpenAsync(input, cts.Token);
 
 // Analyze: title from default.xbe, used/unused space, video partition, demos, duplicates.
 IsoAnalysis analysis = await shrinker.AnalyzeAsync(new AnalyzeOptions { FindDuplicates = true }, progress, cts.Token);

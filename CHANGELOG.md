@@ -2,6 +2,13 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed (breaking)
+- **Names:** the repository is now `Nickel42/lib-xiso-kit` (was `xbox-iso-library`). The packages are renamed to `lib-xiso-kit` and `lib-xiso-kit.Cli`, the library assembly to `lib-xiso-kit`, and release archives to `lib-xiso-kit-cli-*`. The namespace `XboxIsoLibrary` is now `LibXisoKit` (with `LibXisoKit.Cli` and `LibXisoKit.Tests`), the entry-point class `XboxIsoShrinker` is now `XisoShrinker`, and the command-line tool `xboxiso` is now `xiso-kit` (`dotnet tool` command and `xiso-kit` binaries).
+- **Optimized-image tag:** rebuilt XISOs carry `in!xiso!lib-xiso-kit` (space-padded to the 16-character field), so those header bytes differ from rc.2.
+- **Sidecar:** `.shrink.json` sidecars name `lib-xiso-kit` as the tool.
+
 ## 1.0.0-rc.2
 
 The library is now a standalone package for any .NET app.

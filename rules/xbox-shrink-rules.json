@@ -1,5 +1,5 @@
 {
-  // xbox-iso-library rules database.
+  // lib-xiso-kit rules database.
   //
   // Global rules apply to every title; title rules apply when /default.xbe's title ID
   // (and optionally version) matches. Patterns use GlobMatcher syntax:

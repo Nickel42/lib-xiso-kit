@@ -10,6 +10,13 @@
     <AssemblyName>NoIntrovert.XboxIso</AssemblyName>
     <Version>1.0.0-rc.1</Version>
     <Description>Dependency-free library for analysing, trimming, rebuilding and compressing original Xbox disc images (Redump ISO, XISO, CCI, CSO).</Description>
+    <Authors>Nickel42</Authors>
+    <Copyright>Copyright (c) 2026 Nickel42</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/Nickel42/xbox-iso-library</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Nickel42/xbox-iso-library.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <IsTrimmable>true</IsTrimmable>
     <IsAotCompatible>true</IsAotCompatible>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
@@ -19,6 +26,10 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="NoIntrovert.XboxIso.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" Visible="false" />
   </ItemGroup>
 
 </Project>

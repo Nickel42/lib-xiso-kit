@@ -1,0 +1,102 @@
+name: Release
+
+# Push a tag such as v1.0.0 to publish. The workflow:
+#  - builds the NuGet packages with that version and attaches them to a GitHub release,
+#  - builds standalone xboxiso binaries for Windows, Linux and macOS (x64 and Arm64),
+#  - pushes the packages to nuget.org if the NUGET_API_KEY repository secret is set.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  cli:
+    name: xboxiso CLI ${{ matrix.rid }}
+    strategy:
+      matrix:
+        include:
+          - { rid: win-x64,     os: windows-latest }
+          - { rid: win-arm64,   os: windows-latest }
+          - { rid: linux-x64,   os: ubuntu-latest }
+          - { rid: linux-arm64, os: ubuntu-latest }
+          - { rid: osx-x64,     os: macos-latest }
+          - { rid: osx-arm64,   os: macos-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Version from tag
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Publish self-contained single file
+        shell: bash
+        run: >
+          dotnet publish tools/xbox-iso-library.Cli/xbox-iso-library.Cli.csproj -c Release -f net10.0 -r ${{ matrix.rid }}
+          --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=true -p:Version=${VERSION:-0.0.0-dev}
+          -o publish/${{ matrix.rid }}
+      - name: Archive
+        shell: bash
+        run: |
+          cp LICENSE README.md THIRD_PARTY_NOTICES.md publish/${{ matrix.rid }}/
+          cp rules/xbox-shrink-rules.json publish/${{ matrix.rid }}/
+          rm -f publish/${{ matrix.rid }}/*.pdb publish/${{ matrix.rid }}/*.xml
+          cd publish
+          if [[ "${{ matrix.rid }}" == win-* ]]; then
+            7z a "xbox-iso-library-cli-${VERSION:-dev}-${{ matrix.rid }}.zip" "./${{ matrix.rid }}/*"
+          else
+            tar -czf "xbox-iso-library-cli-${VERSION:-dev}-${{ matrix.rid }}.tar.gz" -C "${{ matrix.rid }}" .
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.rid }}
+          path: publish/xbox-iso-library-cli-*
+
+  packages:
+    name: NuGet packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Version from tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Test
+        run: dotnet test xbox-iso-library.sln -c Release
+      - name: Pack
+        run: dotnet pack xbox-iso-library.sln -c Release -o artifacts -p:Version=${VERSION:-0.0.0-dev}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: artifacts/*
+
+  publish:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [cli, packages]
+    runs-on: ubuntu-latest
+    env:
+      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+      - name: nuget.org
+        if: env.NUGET_API_KEY != ''
+        run: dotnet nuget push "dist/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate

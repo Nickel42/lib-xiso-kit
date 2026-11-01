@@ -1,0 +1,36 @@
+<Project>
+  <!-- Settings shared by every project. The library adds packaging settings in src/Directory.Build.props. -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+
+    <!-- Versioning: release builds pass -p:Version=x.y.z from the git tag. -->
+    <VersionPrefix>1.0.0</VersionPrefix>
+    <VersionSuffix>rc.2</VersionSuffix>
+
+    <!-- Package metadata -->
+    <Authors>Nickel42</Authors>
+    <Copyright>Copyright (c) 2026 Nickel42</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/Nickel42/xbox-iso-library</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Nickel42/xbox-iso-library.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <!-- Only the library (src/) and the CLI tool opt in to packing. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
+</Project>

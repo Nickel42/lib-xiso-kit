@@ -1,5 +1,5 @@
 {
-  // NoIntrovert.XboxIso rules database.
+  // xbox-iso-library rules database.
   //
   // Global rules apply to every title; title rules apply when /default.xbe's title ID
   // (and optionally version) matches. Patterns use GlobMatcher syntax:

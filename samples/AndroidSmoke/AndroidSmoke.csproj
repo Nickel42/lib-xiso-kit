@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Minimal .NET for Android app that references the library and calls into it. CI builds it in
+    Release (trimmed), which checks that the library works in Android apps. Needs the "android"
+    workload: dotnet workload install android
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <SupportedOSPlatformVersion>24</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+    <ApplicationId>io.github.nickel42.xboxisosmoke</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <!-- Show trim warnings from the library, if any, as errors. -->
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+    <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2057;IL2072;IL2075;IL2087;IL2091;IL3050;IL3051</WarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\xbox-iso-library\xbox-iso-library.csproj" />
+  </ItemGroup>
+</Project>

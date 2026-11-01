@@ -1,9 +1,9 @@
 using Android.App;
 using Android.OS;
 using Android.Widget;
-using XboxIsoLibrary.Analysis;
-using XboxIsoLibrary.IO;
-using XboxIsoLibrary.Xdvdfs;
+using LibXisoKit.Analysis;
+using LibXisoKit.IO;
+using LibXisoKit.Xdvdfs;
 
 namespace AndroidSmoke;
 

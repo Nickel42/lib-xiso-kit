@@ -7,7 +7,7 @@ Issues and pull requests are welcome.
 ```bash
 dotnet build
 dotnet test
-dotnet run --project tools/xbox-iso-library.Cli -c Release -- selftest
+dotnet run --project tools/lib-xiso-kit.Cli -c Release -- selftest
 ```
 
 You need the .NET 10 SDK. Install the .NET 8 runtime too, to run the net8.0 tests. To build the Android sample:
@@ -32,5 +32,5 @@ dotnet build samples/AndroidSmoke -c Release
    git tag v1.0.0-rc.2
    git push origin v1.0.0-rc.2
    ```
-3. The **Release** workflow tests and packs everything with that version, builds the standalone `xboxiso` binaries, and creates a GitHub release with all of them attached. A tag with a pre-release suffix (`v1.0.0-rc.2`, `v2.1.0-beta`) is published as a GitHub pre-release, so only full versions become the "Latest" release.
-4. If the repository has a `NUGET_API_KEY` secret (an API key from nuget.org scoped to the `xbox-iso-library*` packages), the workflow also pushes the packages to nuget.org.
+3. The **Release** workflow tests and packs everything with that version, builds the standalone `xiso-kit` binaries, and creates a GitHub release with all of them attached. A tag with a pre-release suffix (`v1.0.0-rc.2`, `v2.1.0-beta`) is published as a GitHub pre-release, so only full versions become the "Latest" release.
+4. If the repository has a `NUGET_API_KEY` secret (an API key from nuget.org scoped to the `lib-xiso-kit*` packages), the workflow also pushes the packages to nuget.org.

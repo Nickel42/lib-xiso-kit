@@ -2,7 +2,7 @@ name: Release
 
 # Push a tag such as v1.0.0 to publish. The workflow:
 #  - builds the NuGet packages with that version and attaches them to a GitHub release,
-#  - builds standalone xboxiso binaries for Windows, Linux and macOS (x64 and Arm64),
+#  - builds standalone xiso-kit binaries for Windows, Linux and macOS (x64 and Arm64),
 #  - pushes the packages to nuget.org if the NUGET_API_KEY repository secret is set.
 on:
   push:
@@ -18,7 +18,7 @@ env:
 
 jobs:
   cli:
-    name: xboxiso CLI ${{ matrix.rid }}
+    name: xiso-kit CLI ${{ matrix.rid }}
     strategy:
       matrix:
         include:
@@ -40,7 +40,7 @@ jobs:
       - name: Publish self-contained single file
         shell: bash
         run: >
-          dotnet publish tools/xbox-iso-library.Cli/xbox-iso-library.Cli.csproj -c Release -f net10.0 -r ${{ matrix.rid }}
+          dotnet publish tools/lib-xiso-kit.Cli/lib-xiso-kit.Cli.csproj -c Release -f net10.0 -r ${{ matrix.rid }}
           --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=true -p:Version=${VERSION:-0.0.0-dev}
           -o publish/${{ matrix.rid }}
       - name: Archive
@@ -51,14 +51,14 @@ jobs:
           rm -f publish/${{ matrix.rid }}/*.pdb publish/${{ matrix.rid }}/*.xml
           cd publish
           if [[ "${{ matrix.rid }}" == win-* ]]; then
-            7z a "xbox-iso-library-cli-${VERSION:-dev}-${{ matrix.rid }}.zip" "./${{ matrix.rid }}/*"
+            7z a "lib-xiso-kit-cli-${VERSION:-dev}-${{ matrix.rid }}.zip" "./${{ matrix.rid }}/*"
           else
-            tar -czf "xbox-iso-library-cli-${VERSION:-dev}-${{ matrix.rid }}.tar.gz" -C "${{ matrix.rid }}" .
+            tar -czf "lib-xiso-kit-cli-${VERSION:-dev}-${{ matrix.rid }}.tar.gz" -C "${{ matrix.rid }}" .
           fi
       - uses: actions/upload-artifact@v4
         with:
           name: cli-${{ matrix.rid }}
-          path: publish/xbox-iso-library-cli-*
+          path: publish/lib-xiso-kit-cli-*
 
   packages:
     name: NuGet packages
@@ -73,9 +73,9 @@ jobs:
       - name: Version from tag
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
       - name: Test
-        run: dotnet test xbox-iso-library.sln -c Release
+        run: dotnet test lib-xiso-kit.sln -c Release
       - name: Pack
-        run: dotnet pack xbox-iso-library.sln -c Release -o artifacts -p:Version=${VERSION:-0.0.0-dev}
+        run: dotnet pack lib-xiso-kit.sln -c Release -o artifacts -p:Version=${VERSION:-0.0.0-dev}
       - uses: actions/upload-artifact@v4
         with:
           name: packages

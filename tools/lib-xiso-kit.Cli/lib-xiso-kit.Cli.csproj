@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <AssemblyName>xiso-kit</AssemblyName>
+    <RootNamespace>LibXisoKit.Cli</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!-- Installable with `dotnet tool install -g lib-xiso-kit.Cli`; standalone binaries come from the release workflow. -->
+    <IsPackable>true</IsPackable>
+    <PackAsTool>true</PackAsTool>
+    <PackageId>lib-xiso-kit.Cli</PackageId>
+    <ToolCommandName>xiso-kit</ToolCommandName>
+    <Description>xiso-kit: command-line tool for original Xbox disc images, built on lib-xiso-kit. Show info, analyze, shrink (rebuild or trim), convert between ISO, CCI and CSO, split, verify, pack and extract, hash against Redump DATs, and run a self-test.</Description>
+    <PackageTags>xbox;original-xbox;xiso;iso;cci;cso;shrink;cli;dotnet-tool</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\lib-xiso-kit\lib-xiso-kit.csproj" />
+  </ItemGroup>
+</Project>

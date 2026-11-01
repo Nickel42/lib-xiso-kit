@@ -4,7 +4,7 @@
     <TargetFramework>net8.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
-    <!-- In your own project: <PackageReference Include="xbox-iso-library" Version="1.0.0-rc.2" /> -->
-    <ProjectReference Include="..\..\src\xbox-iso-library\xbox-iso-library.csproj" />
+    <!-- In your own project: <PackageReference Include="lib-xiso-kit" Version="1.0.0-rc.2" /> -->
+    <ProjectReference Include="..\..\src\lib-xiso-kit\lib-xiso-kit.csproj" />
   </ItemGroup>
 </Project>

@@ -1,14 +1,14 @@
-# xbox-iso-library
+# lib-xiso-kit
 
 A dependency-free C# library for original Xbox disc images, usable from any .NET app. It opens Redump ISOs, XISOs, split ISOs, CCI and CSO images, and analyzes the title and wasted space. It then rebuilds or trims them to a smaller XISO and writes ISO, CCI or CSO, optionally split below the FATX 4 GiB limit, and verifies the result. No native code, no package dependencies.
 
-[![CI](https://github.com/Nickel42/xbox-iso-library/actions/workflows/ci.yml/badge.svg)](https://github.com/Nickel42/xbox-iso-library/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/Nickel42/xbox-iso-library/blob/main/LICENSE)
+[![CI](https://github.com/Nickel42/lib-xiso-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/Nickel42/lib-xiso-kit/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/Nickel42/lib-xiso-kit/blob/main/LICENSE)
 
 | Package | What it is |
 |---|---|
-| **xbox-iso-library** | The library (namespace `XboxIsoLibrary`) |
-| **xbox-iso-library.Cli** | The `xboxiso` command-line tool, as a `dotnet tool` or a standalone binary |
+| **lib-xiso-kit** | The library (namespace `LibXisoKit`) |
+| **lib-xiso-kit.Cli** | The `xiso-kit` command-line tool, as a `dotnet tool` or a standalone binary |
 
 ## Platforms
 
@@ -27,16 +27,16 @@ Any app on .NET 8 or later can use it, including `net8.0-android`, `net9.0-ios` 
 ## Install
 
 ```bash
-dotnet add package xbox-iso-library
+dotnet add package lib-xiso-kit
 ```
 
 The command-line tool:
 
 ```bash
-dotnet tool install -g xbox-iso-library.Cli
+dotnet tool install -g lib-xiso-kit.Cli
 ```
 
-Standalone `xboxiso` binaries for Windows, Linux and macOS (no .NET install needed) are attached to each [GitHub release](https://github.com/Nickel42/xbox-iso-library/releases). Until a release reaches nuget.org, reference `src/xbox-iso-library` directly or use the packages attached to a release.
+Standalone `xiso-kit` binaries for Windows, Linux and macOS (no .NET install needed) are attached to each [GitHub release](https://github.com/Nickel42/lib-xiso-kit/releases). Until a release reaches nuget.org, reference `src/lib-xiso-kit` directly or use the packages attached to a release.
 
 ## What it does
 
@@ -56,19 +56,19 @@ No demo list is built in. Only `$SystemUpdate` removal is enabled by default. Fo
 
 ## Quick start
 
-This is [`samples/QuickStart`](https://github.com/Nickel42/xbox-iso-library/tree/main/samples/QuickStart), which CI compiles on every change.
+This is [`samples/QuickStart`](https://github.com/Nickel42/lib-xiso-kit/tree/main/samples/QuickStart), which CI compiles on every change.
 
 ```csharp
-using XboxIsoLibrary;
-using XboxIsoLibrary.Analysis;
-using XboxIsoLibrary.IO;
-using XboxIsoLibrary.Shrinking;
-using XboxIsoLibrary.Xdvdfs;
+using LibXisoKit;
+using LibXisoKit.Analysis;
+using LibXisoKit.IO;
+using LibXisoKit.Shrinking;
+using LibXisoKit.Xdvdfs;
 
 var progress = new Progress<OperationProgress>(p => Console.Write($"\r{p.Stage}: {(p.Fraction ?? 0):P0}"));
 
 // Open any supported image and analyze it.
-using var shrinker = await XboxIsoShrinker.OpenAsync(path, ct);
+using var shrinker = await XisoShrinker.OpenAsync(path, ct);
 IsoAnalysis analysis = await shrinker.AnalyzeAsync(new AnalyzeOptions { FindDuplicates = true }, progress, ct);
 Console.WriteLine($"{analysis.DefaultXbe?.TitleName} [{analysis.DefaultXbe?.TitleIdHex}] {analysis.DefaultXbe?.RegionLabel}");
 
@@ -87,7 +87,7 @@ ShrinkResult result = await shrinker.ExecuteAsync(plan, outputPath, progress, ct
 // result.OutputFiles, result.OutputBytes, result.Verification, result.SidecarPath
 ```
 
-The one-shot form is `XboxIsoShrinker.ShrinkAsync(input, output, options, rules, progress, ct)`.
+The one-shot form is `XisoShrinker.ShrinkAsync(input, output, options, rules, progress, ct)`.
 
 ## Using it in an app
 
@@ -95,7 +95,7 @@ The one-shot form is `XboxIsoShrinker.ShrinkAsync(input, output, options, rules,
 - **Showing the plan:** bind `plan.Items` to a list with a checkbox on `PlannedRemoval.Remove`, and show `plan.Warnings`, `plan.RemovedBytes` and `plan.EstimatedOutputBytes`. `Remove` is a plain property; wrap it in your view model if you need `INotifyPropertyChanged`.
 - **Safe output:** cancellation is honoured throughout. A cancelled or failed write deletes its partial output, and a failed verification deletes the output too. Existing outputs are never overwritten unless `Overwrite = true`.
 - **Deleting the source:** `DeleteSourceAfterVerify` only deletes the source after a successful verification. Offer it as an explicit choice, because the original is the only file that still matches Redump.
-- **Concurrency:** `XboxIsoShrinker` keeps the source open and is not thread-safe. Use one instance per job; separate jobs can run in parallel.
+- **Concurrency:** `XisoShrinker` keeps the source open and is not thread-safe. Use one instance per job; separate jobs can run in parallel.
 - **Android and iOS:** the APIs take file paths. Files picked through the Storage Access Framework (Android) or document picker (iOS) arrive as streams or content URIs; copy them into your app's storage first. Disc images are large, so check the free space before you copy.
 
 ## Choosing options
@@ -110,28 +110,28 @@ The one-shot form is `XboxIsoShrinker.ShrinkAsync(input, output, options, rules,
 
 `MediaPatch` (default on) applies extract-xiso's XBE media-check patch. It makes the output match what extract-xiso and Repackinator users expect. Turn it off to keep executables byte-identical.
 
-Rebuilt images carry the optimized-image tag `in!xiso!xbox-iso-library`, the way extract-xiso writes its own name there. Set `XisoBuildOptions.TagVersion` (16 characters) to write something else.
+Rebuilt images carry the optimized-image tag `in!xiso!lib-xiso-kit`, the way extract-xiso writes its own name there. Set `XisoBuildOptions.TagVersion` (16 characters) to write something else.
 
 ## Rules database
 
-See [`rules/xbox-shrink-rules.json`](https://github.com/Nickel42/xbox-iso-library/blob/main/rules/xbox-shrink-rules.json). A rule is applied automatically only when it is marked `"verified": true`. Unverified rules show up in the plan unselected unless `ApplyUnverifiedRules` is set. Build the database from titles you have actually tested: shrink the game, boot it, and open every menu that might link to the removed content.
+See [`rules/xbox-shrink-rules.json`](https://github.com/Nickel42/lib-xiso-kit/blob/main/rules/xbox-shrink-rules.json). A rule is applied automatically only when it is marked `"verified": true`. Unverified rules show up in the plan unselected unless `ApplyUnverifiedRules` is set. Build the database from titles you have actually tested: shrink the game, boot it, and open every menu that might link to the removed content.
 
-## Command line (`xboxiso`)
+## Command line (`xiso-kit`)
 
 ```bash
-xboxiso info    game.iso
-xboxiso analyze game.iso --dupes --rules rules/xbox-shrink-rules.json
-xboxiso shrink  game.iso out/game.iso --dedupe --dry-run      # show the plan only
-xboxiso shrink  game.iso out/game.cci --format cci --split --dedupe --hash
-xboxiso shrink  game.iso out/game.iso --mode trim             # most conservative
-xboxiso verify  out/game.cci
-xboxiso convert out/game.iso out/game.cso --format cso
-xboxiso extract game.iso extracted/
-xboxiso hash    game.iso --dat "Microsoft - Xbox (Redump).dat"
-xboxiso selftest                                              # no game needed
+xiso-kit info    game.iso
+xiso-kit analyze game.iso --dupes --rules rules/xbox-shrink-rules.json
+xiso-kit shrink  game.iso out/game.iso --dedupe --dry-run      # show the plan only
+xiso-kit shrink  game.iso out/game.cci --format cci --split --dedupe --hash
+xiso-kit shrink  game.iso out/game.iso --mode trim             # most conservative
+xiso-kit verify  out/game.cci
+xiso-kit convert out/game.iso out/game.cso --format cso
+xiso-kit extract game.iso extracted/
+xiso-kit hash    game.iso --dat "Microsoft - Xbox (Redump).dat"
+xiso-kit selftest                                              # no game needed
 ```
 
-Run `xboxiso help` for every option. `selftest` builds a synthetic disc with a fake 387 MiB Redump video partition, demos, a dashboard update and duplicate files. It then exercises rebuild, trim, every output format, splitting, deduplication, determinism and conversion, comparing every file byte for byte. It needs about 400 MB of free temp space.
+Run `xiso-kit help` for every option. `selftest` builds a synthetic disc with a fake 387 MiB Redump video partition, demos, a dashboard update and duplicate files. It then exercises rebuild, trim, every output format, splitting, deduplication, determinism and conversion, comparing every file byte for byte. It needs about 400 MB of free temp space.
 
 ## Not included
 
@@ -146,31 +146,31 @@ Needs the .NET 10 SDK (the tests also run on .NET 8 if it is installed).
 ```bash
 dotnet build
 dotnet test
-dotnet run --project tools/xbox-iso-library.Cli -c Release -- selftest
+dotnet run --project tools/lib-xiso-kit.Cli -c Release -- selftest
 dotnet pack -c Release -o artifacts
 ```
 
-See [docs/TESTING.md](https://github.com/Nickel42/xbox-iso-library/blob/main/docs/TESTING.md) for testing with real dumps, and [CONTRIBUTING.md](https://github.com/Nickel42/xbox-iso-library/blob/main/CONTRIBUTING.md) for how releases work.
+See [docs/TESTING.md](https://github.com/Nickel42/lib-xiso-kit/blob/main/docs/TESTING.md) for testing with real dumps, and [CONTRIBUTING.md](https://github.com/Nickel42/lib-xiso-kit/blob/main/CONTRIBUTING.md) for how releases work.
 
 ```
-src/xbox-iso-library/            the library
+src/lib-xiso-kit/                the library
   IO/            ImageSource, ImageOpener, VirtualImage, ImageWriter, split handling
   Compression/   LZ4 block codec, CCI and CSO readers
   Xdvdfs/        filesystem reader, XISO builder, partition trimmer
   Xbe/           XBE header/certificate parser, media patch
   Analysis/      analyzer, rules database, glob matcher
   Identity/      CRC32, file hashes, Redump DAT matching
-  Shrinking/     XboxIsoShrinker (entry point), options, plan, result, sidecar
-tools/xbox-iso-library.Cli/      xboxiso command-line tool + selftest
-tests/xbox-iso-library.Tests/    xunit tests
+  Shrinking/     XisoShrinker (entry point), options, plan, result, sidecar
+tools/lib-xiso-kit.Cli/          xiso-kit command-line tool + selftest
+tests/lib-xiso-kit.Tests/        xunit tests
 samples/                         QuickStart and an Android smoke test
 rules/                           rules database template
 ```
 
 ## Legal
 
-This library is for working with disc images you dumped from games you own. It contains no Microsoft keys, firmware, executables or other copyrighted Microsoft material; test images are synthetic. Formats were implemented from public specifications and from reading extract-xiso (BSD-style license), xdvdfs and ciso (MIT), and XboxToolkit (GPL-3.0; read for format details only). No code was copied; see [THIRD_PARTY_NOTICES.md](https://github.com/Nickel42/xbox-iso-library/blob/main/THIRD_PARTY_NOTICES.md). "Xbox" is a trademark of Microsoft; this project is not affiliated with or endorsed by Microsoft.
+This library is for working with disc images you dumped from games you own. It contains no Microsoft keys, firmware, executables or other copyrighted Microsoft material; test images are synthetic. Formats were implemented from public specifications and from reading extract-xiso (BSD-style license), xdvdfs and ciso (MIT), and XboxToolkit (GPL-3.0; read for format details only). No code was copied; see [THIRD_PARTY_NOTICES.md](https://github.com/Nickel42/lib-xiso-kit/blob/main/THIRD_PARTY_NOTICES.md). "Xbox" is a trademark of Microsoft; this project is not affiliated with or endorsed by Microsoft.
 
 ## License
 
-[MIT](https://github.com/Nickel42/xbox-iso-library/blob/main/LICENSE) © 2026 Nickel42
+[MIT](https://github.com/Nickel42/lib-xiso-kit/blob/main/LICENSE) © 2026 Nickel42

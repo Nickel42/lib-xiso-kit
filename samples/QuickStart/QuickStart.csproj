@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- In your own project: <PackageReference Include="xbox-iso-library" Version="1.0.0-rc.2" /> -->
+    <ProjectReference Include="..\..\src\xbox-iso-library\xbox-iso-library.csproj" />
+  </ItemGroup>
+</Project>

@@ -32,5 +32,5 @@ dotnet build samples/AndroidSmoke -c Release
    git tag v1.0.0-rc.2
    git push origin v1.0.0-rc.2
    ```
-3. The **Release** workflow tests and packs everything with that version, builds the standalone `xboxiso` binaries, and creates a GitHub release with all of them attached.
+3. The **Release** workflow tests and packs everything with that version, builds the standalone `xboxiso` binaries, and creates a GitHub release with all of them attached. A tag with a pre-release suffix (`v1.0.0-rc.2`, `v2.1.0-beta`) is published as a GitHub pre-release, so only full versions become the "Latest" release.
 4. If the repository has a `NUGET_API_KEY` secret (an API key from nuget.org scoped to the `xbox-iso-library*` packages), the workflow also pushes the packages to nuget.org.

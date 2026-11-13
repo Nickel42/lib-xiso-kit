@@ -1,6 +1,6 @@
 # lib-xiso-kit
 
-A dependency-free C# library for original Xbox disc images, usable from any .NET app. It opens Redump ISOs, XISOs, split ISOs, CCI and CSO images, and analyzes the title and wasted space. It then rebuilds or trims them to a smaller XISO and writes ISO, CCI or CSO, optionally split below the FATX 4 GiB limit, and verifies the result. No native code, no package dependencies.
+A dependency-free C# library for original Xbox and Xbox 360 disc images and packages, usable from any .NET app. It opens Redump ISOs, XISOs, split ISOs, CCI and CSO images, and analyzes the title and wasted space. It then rebuilds or trims them to a smaller XISO and writes ISO, CCI or CSO, optionally split below the FATX 4 GiB limit, and verifies the result. It also reads Xbox 360 STFS packages (XBLA games, DLC, title updates) and Games on Demand headers. No native code, no package dependencies.
 
 [![CI](https://github.com/Nickel42/lib-xiso-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/Nickel42/lib-xiso-kit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/Nickel42/lib-xiso-kit/blob/main/LICENSE)
@@ -51,6 +51,7 @@ Standalone `xiso-kit` binaries for Windows, Linux and macOS (no .NET install nee
 | Verify | Re-opens the output, walks the filesystem, parses `default.xbe`, and compares the SHA-1 of the whole logical image with what was written |
 | Identity | CRC32/MD5/SHA-1 of the source, Redump DAT (Logiqx XML) matching, and a `<output>.shrink.json` sidecar that preserves the original identity |
 | Extras | Pack a folder to an image, extract an image, convert between containers losslessly, deterministic output |
+| Xbox 360 packages | `StfsHeader` reads any CON, LIVE or PIRS header: content type (XBLA, DLC, title update, Games on Demand…), title ID, media ID, version and names. `StfsPackage` lists and extracts an STFS package's files and checks its whole SHA-1 hash tree. Games on Demand (SVOD) packages open for their header only |
 
 No demo list is built in. Only `$SystemUpdate` removal is enabled by default. Folders that look like demos are flagged for review. Real per-title removals come from your rules file (`rules/xbox-shrink-rules.json`), keyed by title ID and optionally version.
 
@@ -88,6 +89,19 @@ ShrinkResult result = await shrinker.ExecuteAsync(plan, outputPath, progress, ct
 ```
 
 The one-shot form is `XisoShrinker.ShrinkAsync(input, output, options, rules, progress, ct)`.
+
+An Xbox 360 package:
+
+```csharp
+using LibXisoKit.Stfs;
+
+using var package = StfsPackage.Open(path);   // CON, LIVE or PIRS
+var h = package.Header;
+Console.WriteLine($"{h.DisplayName} [{h.TitleIdText}] {h.ContentTypeText}");
+foreach (var file in package.EnumerateFiles()) Console.WriteLine($"{file.Path} {file.Size}");
+StfsVerification check = package.Verify();     // every hash table and data block
+package.ExtractTo(folder);
+```
 
 ## Using it in an app
 
@@ -138,6 +152,7 @@ Run `xiso-kit help` for every option. `selftest` builds a synthetic disc with a 
 - **Attacher `default.xbe` generation** (Repackinator/Cerbios loaders for HDD folders). The known attachers are GPL binaries. Generate them with Repackinator or XBMC4Gamers.
 - **Title images and artwork**, beyond what `XbeInfo` exposes.
 - Xbox 360 images can be read and rebuilt, but the target is original Xbox and 360 output hasn't been tested on hardware.
+- Writing STFS packages (and so ISO → Games on Demand), and the files inside a Games on Demand package. Package signatures aren't checked; `Verify` checks the hash tree. The STFS tests use synthetic packages.
 
 ## Building from source
 

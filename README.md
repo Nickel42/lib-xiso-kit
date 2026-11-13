@@ -1,6 +1,6 @@
 # lib-xiso-kit
 
-A dependency-free C# library for original Xbox disc images, usable from any .NET app. It opens Redump ISOs, XISOs, split ISOs, CCI and CSO images, and analyzes the title and wasted space. It then rebuilds or trims them to a smaller XISO and writes ISO, CCI or CSO, optionally split below the FATX 4 GiB limit, and verifies the result. No native code, no package dependencies.
+A dependency-free C# library for original Xbox and Xbox 360 disc images and packages, usable from any .NET app. It opens Redump ISOs, XISOs, split ISOs, CCI and CSO images, and analyzes the title and wasted space. It then rebuilds or trims them to a smaller XISO and writes ISO, CCI or CSO, optionally split below the FATX 4 GiB limit, and verifies the result. It also reads Xbox 360 STFS packages (XBLA games, DLC, title updates) and Games on Demand headers. No native code, no package dependencies.
 
 [![CI](https://github.com/Nickel42/lib-xiso-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/Nickel42/lib-xiso-kit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/Nickel42/lib-xiso-kit/blob/main/LICENSE)
@@ -51,6 +51,7 @@ Standalone `xiso-kit` binaries for Windows, Linux and macOS (no .NET install nee
 | Verify | Re-opens the output, walks the filesystem, parses `default.xbe`, and compares the SHA-1 of the whole logical image with what was written |
 | Identity | CRC32/MD5/SHA-1 of the source, Redump DAT (Logiqx XML) matching, and a `<output>.shrink.json` sidecar that preserves the original identity |
 | Extras | Pack a folder to an image, extract an image, convert between containers losslessly, deterministic output |
+| Xbox 360 packages | `StfsHeader` reads any CON, LIVE or PIRS header: content type (XBLA, DLC, title update, Games on Demand…), title ID, media ID, version and names. `StfsPackage` lists and extracts an STFS package's files and checks its whole SHA-1 hash tree. Games on Demand (SVOD) packages open for their header only |
 
 No demo list is built in. Only `$SystemUpdate` removal is enabled by default. Folders that look like demos are flagged for review. Real per-title removals come from your rules file (`rules/xbox-shrink-rules.json`), keyed by title ID and optionally version.
 
@@ -88,6 +89,76 @@ ShrinkResult result = await shrinker.ExecuteAsync(plan, outputPath, progress, ct
 ```
 
 The one-shot form is `XisoShrinker.ShrinkAsync(input, output, options, rules, progress, ct)`.
+
+## Xbox 360
+
+The library is for both consoles. Xbox 360 discs use the same XDVDFS file system as original Xbox discs, only at a different place in a Redump image, so the disc code serves both; the 360's packages have their own reader in `LibXisoKit.Stfs`.
+
+| | Original Xbox | Xbox 360 |
+|---|---|---|
+| Open a Redump ISO | XGD1 | XGD2, XGD3 and XGD2 hybrid (`XdvdfsVolume.Layout` says which) |
+| Open an XISO, split ISO, CCI or CSO | Yes | Yes |
+| List, read and extract files (`XdvdfsVolume`) | Yes | Yes |
+| Title, region and version (`XbeInfo`) | From `default.xbe` | Not read: 360 games start from `default.xex`, which isn't parsed |
+| Rebuild or trim, write ISO, CCI or CSO | Yes, checked on real dumps | Works, but untested on hardware; Xenia plays the Redump `.iso` as it is |
+| Packages (`StfsHeader`, `StfsPackage`) | — | CON, LIVE and PIRS headers; the files of STFS packages (XBLA games, DLC, title updates) with a check of their hash tree; Games on Demand (SVOD) for their header only |
+| ZArchive (`.zar`) for Xenia Canary | — | With lib-wii-u-kit added, below |
+
+A disc is a 360 game when its root folder holds `default.xex`:
+
+```csharp
+using var volume = XdvdfsVolume.Open(path);    // Redump XGD1/XGD2/XGD3, XISO, CCI or CSO
+bool isXbox360 = volume.Find("/default.xex") is not null;
+```
+
+An Xbox 360 package (they usually have no file extension: they're named by content ID):
+
+```csharp
+using LibXisoKit.Stfs;
+
+if (StfsHeader.TryRead(path) is { } header)   // null when it isn't a package
+    Console.WriteLine($"{header.DisplayName} [{header.TitleIdText}] {header.ContentTypeText}");
+
+using var package = StfsPackage.Open(path);   // CON, LIVE or PIRS
+foreach (var file in package.EnumerateFiles()) Console.WriteLine($"{file.Path} {file.Size}");
+StfsVerification check = package.Verify();     // every hash table and data block
+package.ExtractTo(folder);
+```
+
+### Making a .zar (ZArchive) with lib-wii-u-kit
+
+Xenia Canary plays a 360 game from a ZArchive (`.zar`) without unpacking it. ZArchive is Cemu's format (Cemu's `.wua` is one), and the writer and reader live in [lib-wii-u-kit](https://github.com/Nickel42/lib-wii-u-kit), whose `ZArchiveWriter` and `ZArchiveReader` handle any ZArchive, not just Wii U ones. lib-xiso-kit doesn't include them so that it stays dependency-free (ZArchive needs zstd). Add both packages and stream the disc's files across:
+
+```bash
+dotnet add package lib-xiso-kit
+dotnet add package lib-wii-u-kit
+```
+
+```csharp
+using LibWiiUKit;          // ZArchiveWriter, ZArchiveReader
+using LibXisoKit.Xdvdfs;
+
+using (var volume = XdvdfsVolume.Open("Game.iso"))
+using (var writer = new ZArchiveWriter("Game.zar"))   // fails if Game.zar exists
+{
+    foreach (var entry in volume.EnumerateEntries())
+    {
+        var path = entry.Path.TrimStart('/');
+        if (path.Length == 0) continue;
+        if (entry.IsDirectory) { writer.AddDirectory(path); continue; }
+        var folder = Path.GetDirectoryName(path)?.Replace('\\', '/');
+        if (!string.IsNullOrEmpty(folder)) writer.AddDirectory(folder);   // a file's folder must exist first
+        using var data = volume.OpenFile(entry);
+        writer.AddFile(path, data);
+    }
+    writer.Finish();
+}
+
+using var check = ZArchiveReader.Open("Game.zar");
+bool intact = check.CheckIntegrity();   // the archive's SHA-256
+```
+
+Write to a temporary name and check the archive (its SHA-256, and ideally each file read back against the disc) before replacing anything. A `.zar` holds the disc's files, not the disc, so it can't be turned back into the Redump `.iso`: keep the image's hashes (see `ImageIdentity`) if you need to match it against Redump later. NoIntrovert's `Xbox360Jobs` does exactly this.
 
 ## Using it in an app
 
@@ -137,7 +208,10 @@ Run `xiso-kit help` for every option. `selftest` builds a synthetic disc with a 
 
 - **Attacher `default.xbe` generation** (Repackinator/Cerbios loaders for HDD folders). The known attachers are GPL binaries. Generate them with Repackinator or XBMC4Gamers.
 - **Title images and artwork**, beyond what `XbeInfo` exposes.
-- Xbox 360 images can be read and rebuilt, but the target is original Xbox and 360 output hasn't been tested on hardware.
+- Xbox 360 rebuild, trim and CCI/CSO output haven't been tested on hardware or in Xenia. Reading 360 discs is tested on a synthetic disc only.
+- Reading `default.xex` (a 360 game's title, region and version).
+- Writing STFS packages (and so ISO → Games on Demand), and the files inside a Games on Demand package. Package signatures aren't checked; `Verify` checks the hash tree. The STFS tests use synthetic packages.
+- Writing ZArchive (`.zar`); use lib-wii-u-kit, as shown under [Xbox 360](#xbox-360).
 
 ## Building from source
 

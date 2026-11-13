@@ -3,8 +3,8 @@
     <AssemblyName>lib-xiso-kit</AssemblyName>
     <PackageId>lib-xiso-kit</PackageId>
     <RootNamespace>LibXisoKit</RootNamespace>
-    <Description>Dependency-free library for original Xbox disc images: open Redump ISO, XISO, split ISO, CCI and CSO; analyze titles and wasted space; rebuild or trim to a smaller XISO; write ISO, CCI or CSO, split below the FATX 4 GiB limit; verify the result. Pure managed, no dependencies.</Description>
-    <PackageTags>xbox;original-xbox;xiso;xdvdfs;iso;cci;cso;redump;shrink;repack</PackageTags>
+    <Description>Dependency-free library for original Xbox and Xbox 360 disc images and packages: open Redump ISO, XISO, split ISO, CCI and CSO; analyze titles and wasted space; rebuild or trim to a smaller XISO; write ISO, CCI or CSO, split below the FATX 4 GiB limit; verify the result. Reads Xbox 360 STFS packages (XBLA, DLC, title updates) and Games on Demand headers. Pure managed, no dependencies.</Description>
+    <PackageTags>xbox;original-xbox;xbox360;xiso;xdvdfs;stfs;xbla;iso;cci;cso;redump;shrink;repack</PackageTags>
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="lib-xiso-kit.Tests" />

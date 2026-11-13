@@ -4,6 +4,9 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## Unreleased
 
+### Added
+- **Xbox 360 packages:** `LibXisoKit.Stfs`. `StfsHeader` reads CON, LIVE and PIRS headers (content type, title ID, media ID, version, names, STFS or SVOD). `StfsPackage` lists, reads and extracts the files of an STFS package (XBLA games, DLC, title updates), with one or two copies of each hash table and up to three table levels, and `Verify` checks the whole hash tree. Games on Demand (SVOD) packages open for their header only.
+
 ### Changed (breaking)
 - **Names:** the repository is now `Nickel42/lib-xiso-kit` (was `xbox-iso-library`). The packages are renamed to `lib-xiso-kit` and `lib-xiso-kit.Cli`, the library assembly to `lib-xiso-kit`, and release archives to `lib-xiso-kit-cli-*`. The namespace `XboxIsoLibrary` is now `LibXisoKit` (with `LibXisoKit.Cli` and `LibXisoKit.Tests`), the entry-point class `XboxIsoShrinker` is now `XisoShrinker`, and the command-line tool `xboxiso` is now `xiso-kit` (`dotnet tool` command and `xiso-kit` binaries).
 - **Optimized-image tag:** rebuilt XISOs carry `in!xiso!lib-xiso-kit` (space-padded to the 16-character field), so those header bytes differ from rc.2.

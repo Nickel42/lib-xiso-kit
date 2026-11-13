@@ -12,6 +12,8 @@ The tests run against both library targets (net8.0 and net10.0). CI runs them an
 
 `selftest` needs no game: it builds a synthetic disc and checks rebuild, trim, every output format, splitting, deduplication, determinism and conversion byte for byte.
 
+The Xbox 360 package tests (`StfsTests`) build synthetic STFS packages with `StfsBuilder`. It lays blocks down in the order the format describes, not from the reader's address formulas, so the two check each other. They cover CON, LIVE and PIRS headers, one and two copies of each hash table (with the second copy in use), a chained file, a three-level hash tree (past 28,900 blocks) and a damaged block.
+
 ## 2. Real-dump checklist
 
 1. On 3–5 real Redump dumps:
@@ -36,3 +38,12 @@ On Ninja Gaiden Black (an existing XISO) and three Redump dumps (Jade Empire, Ma
 - The Linux build of `xiso-kit` gives the same output as Windows.
 
 Not yet checked: booting in xemu or on Cerbios/Project Stellar, matching against a Redump DAT, and a cross-check with `extract-xiso -l` or xdvdfs.
+
+## 3. Xbox 360 checklist
+
+Nothing below has been checked on real dumps yet.
+
+1. On 2–3 Redump Xbox 360 dumps (an XGD2 and an XGD3): `XdvdfsVolume.Open` gives the right `Layout`, `default.xex` is found, and extracting gives the same files as extract-xiso or xdvdfs.
+2. On real packages (an XBLA game over 118 MB, a DLC, a title update): `StfsPackage.Open` gives no warnings, `Verify` succeeds, and the extracted files match those from Velocity or Horizon.
+3. A Games on Demand header: `StfsHeader` reports `Svod`, its title ID and how many Data files it has.
+4. A `.zar` made as the README shows boots in Xenia Canary.

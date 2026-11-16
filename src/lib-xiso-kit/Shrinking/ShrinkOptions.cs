@@ -66,6 +66,14 @@ public sealed record ShrinkOptions
     /// <summary>Re-read the written output and confirm it matches what was intended.</summary>
     public bool Verify { get; init; } = true;
 
+    /// <summary>
+    /// With <see cref="Verify"/>: compare the re-read image against an XXH64 checksum taken while writing instead of
+    /// a second SHA-1. It catches the same read-back errors several times faster, so verification is bound by
+    /// reading. <see cref="VerifyResult.LogicalSha1"/> is then null; <see cref="ShrinkResult.LogicalSha1"/> is still
+    /// the SHA-1 of what was written.
+    /// </summary>
+    public bool FastVerify { get; init; }
+
     /// <summary>Write a JSON sidecar recording the source identity and what was changed.</summary>
     public bool WriteSidecar { get; init; } = true;
 

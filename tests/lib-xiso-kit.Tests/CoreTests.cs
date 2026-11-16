@@ -228,6 +228,56 @@ public sealed class FastPathTests : IDisposable
         Assert.Equal(mediaPatch, result.PatchedExecutables > 0);
     }
 
+    [Theory]
+    [InlineData("", 0xEF46DB3751D8E999UL)]
+    [InlineData("abc", 0x44BC2CF5AD770999UL)]
+    [InlineData("The quick brown fox jumps over the lazy dog", 0x0B242D361FDA71BCUL)]
+    public void XxHash64KnownValues(string text, ulong expected) =>
+        Assert.Equal(expected, XxHash64.Compute(Encoding.ASCII.GetBytes(text)));
+
+    [Fact]
+    public void XxHash64StreamsLikeOneShot()
+    {
+        var rng = new Random(2);
+        var data = new byte[100_003];
+        rng.NextBytes(data);
+        var x = new XxHash64();
+        for (int pos = 0; pos < data.Length;)
+        {
+            int n = Math.Min(data.Length - pos, rng.Next(1, 70));
+            x.Append(data.AsSpan(pos, n));
+            pos += n;
+        }
+        Assert.Equal(XxHash64.Compute(data), x.Digest());
+        Assert.Equal(0xF80E7B96315AFFFAUL, XxHash64.Compute(Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat("0123456789", 10)))));
+    }
+
+    [Theory]
+    [InlineData(OutputFormat.Iso)]
+    [InlineData(OutputFormat.Cci)]
+    public void FastVerifyChecksTheWrittenImage(OutputFormat format)
+    {
+        var parts = SplitSourceWithTail();
+        using var shrinker = XisoShrinker.Open(parts[0]);
+        var plan = shrinker.CreatePlan(shrinker.Analyze(), new ShrinkOptions { Mode = ShrinkMode.TrimOnly, RemoveSystemUpdate = false, Format = format, FastVerify = true });
+        var result = shrinker.Execute(plan, Path.Combine(_dir, "fast" + ImageWriter.ExtensionFor(format)));
+        Assert.True(result.Verification!.Success);
+        Assert.Null(result.Verification.LogicalSha1);
+        Assert.Equal(XisoShrinker.VerifyImage(result.OutputFiles[0], hashImage: true).LogicalSha1, result.LogicalSha1);
+
+        // A flipped byte in file data is caught.
+        using var source = ImageOpener.Open(result.OutputFiles[0]);
+        var written = ImageWriter.Write(source, Path.Combine(_dir, "flip.iso"), OutputFormat.Iso, null, false, fastChecksum: true, null, CancellationToken.None);
+        using (var fs = new FileStream(written.Files[0], FileMode.Open))
+        {
+            fs.Position = fs.Length - 4096;
+            int b = fs.ReadByte();
+            fs.Position--;
+            fs.WriteByte((byte)~b);
+        }
+        Assert.True(XisoShrinker.VerifyImage(written.Files[0], null, written.LogicalXxHash64, null, null, CancellationToken.None, false).Success == false);
+    }
+
     [Fact]
     public void TeeHashesEveryByteOnceWhateverTheReadOrder()
     {

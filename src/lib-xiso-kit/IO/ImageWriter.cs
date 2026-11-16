@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using LibXisoKit.Compression;
+using LibXisoKit.Identity;
 
 namespace LibXisoKit.IO;
 
@@ -21,7 +22,11 @@ public sealed record WriteResult(
     IReadOnlyList<string> Files,
     long LogicalLength,
     long BytesOnDisk,
-    string LogicalSha1);
+    string LogicalSha1)
+{
+    /// <summary>XXH64 of the logical image, when the writer was asked for it (fast verification).</summary>
+    internal ulong? LogicalXxHash64 { get; init; }
+}
 
 /// <summary>Writes an <see cref="ImageSource"/> to disk as ISO, CCI or CSO, optionally split into FATX-sized parts.</summary>
 public static class ImageWriter
@@ -45,18 +50,31 @@ public static class ImageWriter
         long? splitSize = null,
         bool overwrite = false,
         IProgress<OperationProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        Write(image, outputPath, format, splitSize, overwrite, fastChecksum: false, progress, cancellationToken);
+
+    /// <summary>As the public overload; <paramref name="fastChecksum"/> also takes an XXH64 of the logical image.</summary>
+    internal static WriteResult Write(
+        ImageSource image,
+        string outputPath,
+        OutputFormat format,
+        long? splitSize,
+        bool overwrite,
+        bool fastChecksum,
+        IProgress<OperationProgress>? progress,
+        CancellationToken cancellationToken)
     {
         if (image.Length % SectorSize != 0)
         {
             throw new ArgumentException("Image length must be a multiple of 2048 bytes.", nameof(image));
         }
         var throttled = new ThrottledProgress(progress);
+        using var hash = new LogicalHash(fastChecksum);
         return format switch
         {
-            OutputFormat.Iso => WriteIso(image, outputPath, splitSize, overwrite, throttled, cancellationToken),
-            OutputFormat.Cso => WriteCso(image, outputPath, splitSize, overwrite, throttled, cancellationToken),
-            OutputFormat.Cci => WriteCci(image, outputPath, splitSize, overwrite, throttled, cancellationToken),
+            OutputFormat.Iso => WriteIso(image, outputPath, splitSize, overwrite, hash, throttled, cancellationToken),
+            OutputFormat.Cso => WriteCso(image, outputPath, splitSize, overwrite, hash, throttled, cancellationToken),
+            OutputFormat.Cci => WriteCci(image, outputPath, splitSize, overwrite, hash, throttled, cancellationToken),
             _ => throw new ArgumentOutOfRangeException(nameof(format)),
         };
     }
@@ -162,10 +180,34 @@ public static class ImageWriter
         }
     }
 
-    /// <summary>Hashes <paramref name="chunk"/> on a worker while <paramref name="write"/> runs.</summary>
-    private static void HashWhile(IncrementalHash sha, Chunk chunk, Action write)
+    /// <summary>SHA-1 of the logical image, plus XXH64 when fast verification will need it.</summary>
+    private sealed class LogicalHash : IDisposable
     {
-        var hash = Task.Run(() => sha.AppendData(chunk.Raw, 0, chunk.Bytes));
+        private readonly IncrementalHash _sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
+        private readonly XxHash64? _xx;
+
+        public LogicalHash(bool fastChecksum) => _xx = fastChecksum ? new XxHash64() : null;
+
+        public void Append(byte[] data, int count)
+        {
+            if (_xx is null)
+            {
+                _sha.AppendData(data, 0, count);
+                return;
+            }
+            Parallel.Invoke(() => _sha.AppendData(data, 0, count), () => _xx.Append(data.AsSpan(0, count)));
+        }
+
+        public WriteResult Result(IReadOnlyList<string> files, long logicalLength, long bytesOnDisk) =>
+            new(files, logicalLength, bytesOnDisk, Convert.ToHexString(_sha.GetHashAndReset())) { LogicalXxHash64 = _xx?.Digest() };
+
+        public void Dispose() => _sha.Dispose();
+    }
+
+    /// <summary>Hashes <paramref name="chunk"/> on a worker while <paramref name="write"/> runs.</summary>
+    private static void HashWhile(LogicalHash sha, Chunk chunk, Action write)
+    {
+        var hash = Task.Run(() => sha.Append(chunk.Raw, chunk.Bytes));
         try
         {
             write();
@@ -176,10 +218,9 @@ public static class ImageWriter
         }
     }
 
-    private static WriteResult WriteIso(ImageSource image, string outputPath, long? splitSize, bool overwrite, IProgress<OperationProgress> progress, CancellationToken ct)
+    private static WriteResult WriteIso(ImageSource image, string outputPath, long? splitSize, bool overwrite, LogicalHash sha, IProgress<OperationProgress> progress, CancellationToken ct)
     {
         using var writer = new SplitFileWriter(outputPath, splitSize, overwrite);
-        using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
         ForEachChunk(image, null, ct, (c, sector) =>
         {
             long pos = sector * SectorSize;
@@ -188,7 +229,7 @@ public static class ImageWriter
         });
         long written = writer.BytesWritten;
         var files = writer.Complete();
-        return new WriteResult(files, image.Length, written, Convert.ToHexString(sha.GetHashAndReset()));
+        return sha.Result(files, image.Length, written);
     }
 
     private static int EncodeCci(ReadOnlySpan<byte> sector, Span<byte> scratch, Span<byte> block)
@@ -218,7 +259,7 @@ public static class ImageWriter
         return 4 + len;
     }
 
-    private static WriteResult WriteCso(ImageSource image, string outputPath, long? splitSize, bool overwrite, IProgress<OperationProgress> progress, CancellationToken ct)
+    private static WriteResult WriteCso(ImageSource image, string outputPath, long? splitSize, bool overwrite, LogicalHash sha, IProgress<OperationProgress> progress, CancellationToken ct)
     {
         long sectorCount = image.Length / SectorSize;
         var index = new uint[sectorCount + 1];
@@ -234,7 +275,6 @@ public static class ImageWriter
         }
 
         using var writer = new SplitFileWriter(outputPath, partSize, overwrite);
-        using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
         // A chunk's blocks are gathered here (with their alignment padding) and written in one call.
         byte[] staging = ArrayPool<byte>.Shared.Rent(ChunkSectors * (SectorSize + align));
         try
@@ -290,10 +330,10 @@ public static class ImageWriter
         }
         long written = writer.BytesWritten;
         var files = writer.Complete();
-        return new WriteResult(files, image.Length, written, Convert.ToHexString(sha.GetHashAndReset()));
+        return sha.Result(files, image.Length, written);
     }
 
-    private static WriteResult WriteCci(ImageSource image, string outputPath, long? splitSize, bool overwrite, IProgress<OperationProgress> progress, CancellationToken ct)
+    private static WriteResult WriteCci(ImageSource image, string outputPath, long? splitSize, bool overwrite, LogicalHash sha, IProgress<OperationProgress> progress, CancellationToken ct)
     {
         long limit = splitSize ?? long.MaxValue;
         string fullOutput = Path.GetFullPath(outputPath);
@@ -301,7 +341,6 @@ public static class ImageWriter
         SplitFileWriter.PrepareTargets(fullOutput, splitSize is not null, overwrite);
 
         var created = new List<string>();
-        using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
         long totalOnDisk = 0;
         bool success = false;
 
@@ -402,7 +441,7 @@ public static class ImageWriter
                 }
             }
         }
-        return new WriteResult(created, image.Length, totalOnDisk, Convert.ToHexString(sha.GetHashAndReset()));
+        return sha.Result(created, image.Length, totalOnDisk);
     }
 
     private static void CheckIndexRange(long position)

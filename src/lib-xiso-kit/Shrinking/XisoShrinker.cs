@@ -243,7 +243,8 @@ public sealed class XisoShrinker : IDisposable
         }
 
         // 3. Write.
-        var write = ImageWriter.Write(image, fullOutput, options.Format, options.SplitSize, options.Overwrite, progress, cancellationToken);
+        bool fastVerify = options.Verify && options.FastVerify;
+        var write = ImageWriter.Write(image, fullOutput, options.Format, options.SplitSize, options.Overwrite, fastVerify, progress, cancellationToken);
 
         try
         {
@@ -257,7 +258,9 @@ public sealed class XisoShrinker : IDisposable
             VerifyResult? verify = null;
             if (options.Verify)
             {
-                verify = VerifyImage(write.Files[0], write.LogicalSha1, expectedFiles, progress, cancellationToken);
+                verify = fastVerify
+                    ? VerifyImage(write.Files[0], null, write.LogicalXxHash64, expectedFiles, progress, cancellationToken, hashImage: false)
+                    : VerifyImage(write.Files[0], write.LogicalSha1, expectedFiles, progress, cancellationToken);
                 if (!verify.Success)
                 {
                     throw new InvalidDataException("Verification of the written image failed: " + string.Join("; ", verify.Problems));
@@ -416,7 +419,18 @@ public sealed class XisoShrinker : IDisposable
         int? expectedFileCount = null,
         IProgress<OperationProgress>? progress = null,
         CancellationToken cancellationToken = default,
-        bool hashImage = false)
+        bool hashImage = false) =>
+        VerifyImage(path, expectedLogicalSha1, null, expectedFileCount, progress, cancellationToken, hashImage);
+
+    /// <summary>As the public overload; <paramref name="expectedXxHash64"/> checks the image with XXH64 instead of SHA-1.</summary>
+    internal static VerifyResult VerifyImage(
+        string path,
+        string? expectedLogicalSha1,
+        ulong? expectedXxHash64,
+        int? expectedFileCount,
+        IProgress<OperationProgress>? progress,
+        CancellationToken cancellationToken,
+        bool hashImage)
     {
         var problems = new List<string>();
         string? sha1 = null;
@@ -444,6 +458,15 @@ public sealed class XisoShrinker : IDisposable
                 problems.Add("/default.xbe is missing or invalid.");
             }
 
+            if (expectedXxHash64 is { } expectedXx)
+            {
+                var xx = new XxHash64();
+                ImageHashing.Stream(volume.Source, (b, n) => xx.Append(b.AsSpan(0, n)), OperationStage.Verifying, progress, cancellationToken);
+                if (xx.Digest() != expectedXx)
+                {
+                    problems.Add("Image contents differ from what was written (checksum mismatch).");
+                }
+            }
             if (expectedLogicalSha1 is not null || hashImage)
             {
                 using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);

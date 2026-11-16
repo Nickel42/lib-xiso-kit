@@ -48,7 +48,7 @@ Standalone `xiso-kit` binaries for Windows, Linux and macOS (no .NET install nee
 | **Rebuild** (default) | New minimal XISO laid out like extract-xiso. Supports removals, deduplication (Qwix-style cross-linking), and the XBE media patch |
 | **Trim-only** | Copies the game partition with the original sector layout, drops the video partition and tail, and zero-fills Redump filler. Cannot remove files |
 | Output | ISO, CCI (Cerbios), CSO (CISO v2, Project Stellar), optionally split below the FATX 4 GiB limit |
-| Verify | Re-opens the output, walks the filesystem, parses `default.xbe`, and compares the SHA-1 of the whole logical image with what was written |
+| Verify | Re-opens the output, walks the filesystem, parses `default.xbe`, and compares the SHA-1 of the whole logical image with what was written (or, with `FastVerify`, a much faster XXH64 checksum) |
 | Identity | CRC32/MD5/SHA-1 of the source, Redump DAT (Logiqx XML) matching, and a `<output>.shrink.json` sidecar that preserves the original identity |
 | Extras | Pack a folder to an image, extract an image, convert between containers losslessly, deterministic output |
 | Xbox 360 packages | `StfsHeader` reads any CON, LIVE or PIRS header: content type (XBLA, DLC, title update, Games on Demand…), title ID, media ID, version and names. `StfsPackage` lists and extracts an STFS package's files and checks its whole SHA-1 hash tree. Games on Demand (SVOD) packages open for their header only |

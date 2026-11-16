@@ -6,6 +6,15 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ### Added
 - **Xbox 360 packages:** `LibXisoKit.Stfs`. `StfsHeader` reads CON, LIVE and PIRS headers (content type, title ID, media ID, version, names, STFS or SVOD). `StfsPackage` lists, reads and extracts the files of an STFS package (XBLA games, DLC, title updates), with one or two copies of each hash table and up to three table levels, and `Verify` checks the whole hash tree. Games on Demand (SVOD) packages open for their header only.
+- **Fast verification:** `ShrinkOptions.FastVerify` checks the written image against an XXH64 checksum taken while writing, instead of computing SHA-1 a second time. It is off by default; with it on, `VerifyResult.LogicalSha1` is null, and `ShrinkResult.LogicalSha1` is still the SHA-1 of the output.
+
+### Performance
+- A trim-only shrink with `HashSource` (or a DAT) hashes the source while it writes, so the disc is read once instead of twice. Rebuilds and CCI/CSO sources still hash in a separate pass first.
+- Verification reads the next block while it hashes the current one.
+- CCI and CSO writes read the next chunk while the one before it is compressed.
+- The LZ4 compressor reuses its match table and compares matches with vector instructions: about 1.4× faster per thread, and all-zero sectors about 15× faster.
+- Image files are opened with the OS read-ahead enabled, and ISO output reserves its disk space up front.
+- Output is byte-identical to before these changes.
 
 ### Changed (breaking)
 - **Names:** the repository is now `Nickel42/lib-xiso-kit` (was `xbox-iso-library`). The packages are renamed to `lib-xiso-kit` and `lib-xiso-kit.Cli`, the library assembly to `lib-xiso-kit`, and release archives to `lib-xiso-kit-cli-*`. The namespace `XboxIsoLibrary` is now `LibXisoKit` (with `LibXisoKit.Cli` and `LibXisoKit.Tests`), the entry-point class `XboxIsoShrinker` is now `XisoShrinker`, and the command-line tool `xboxiso` is now `xiso-kit` (`dotnet tool` command and `xiso-kit` binaries).

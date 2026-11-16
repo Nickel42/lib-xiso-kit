@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using LibXisoKit.Analysis;
@@ -437,27 +436,8 @@ public sealed class XisoShrinker : IDisposable
 
             if (expectedLogicalSha1 is not null || hashImage)
             {
-                var throttled = new ThrottledProgress(progress);
                 using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
-                byte[] buffer = ArrayPool<byte>.Shared.Rent(4 << 20);
-                try
-                {
-                    long pos = 0;
-                    long len = volume.Source.Length;
-                    while (pos < len)
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        int want = (int)Math.Min(buffer.Length, len - pos);
-                        volume.Source.ReadExactly(pos, buffer.AsSpan(0, want));
-                        hash.AppendData(buffer, 0, want);
-                        pos += want;
-                        throttled.Report(new OperationProgress(OperationStage.Verifying, pos, len));
-                    }
-                }
-                finally
-                {
-                    ArrayPool<byte>.Shared.Return(buffer);
-                }
+                ImageHashing.Stream(volume.Source, (b, n) => hash.AppendData(b, 0, n), OperationStage.Verifying, progress, cancellationToken);
                 sha1 = Convert.ToHexString(hash.GetHashAndReset());
                 if (expectedLogicalSha1 is not null && !string.Equals(sha1, expectedLogicalSha1, StringComparison.OrdinalIgnoreCase))
                 {

@@ -108,9 +108,11 @@ public static class ImageWriter
     }
 
     /// <summary>
-    /// Streams the image through <paramref name="consume"/> one chunk at a time. The next chunk is read
-    /// (and compressed, when <paramref name="encoder"/> is set) on a worker while the current one is consumed,
-    /// so reading, compressing and writing overlap instead of taking turns.
+    /// Streams the image through <paramref name="consume"/> one chunk at a time, in order. Later chunks are read
+    /// (and compressed, when <paramref name="encoder"/> is set) on workers while the current one is consumed, so
+    /// reading, compressing and writing overlap instead of taking turns. Compressed writes keep three chunks in
+    /// flight, so the read of one chunk also overlaps the compression of the one before it. Reads are issued one
+    /// after another, front to back.
     /// </summary>
     private static void ForEachChunk(ImageSource image, Encoder? encoder, CancellationToken ct, Action<Chunk, long> consume)
     {
@@ -120,62 +122,84 @@ public static class ImageWriter
             return;
         }
 
-        using var a = new Chunk(encoder is not null);
-        using var b = new Chunk(encoder is not null);
-        Task? pending = null;
-        Task Load(Chunk c, long sector) => Task.Run(() =>
+        int depth = encoder is null ? 2 : 3;
+        var chunks = new Chunk[depth];
+        var ready = new Task?[depth];
+        Task reads = Task.CompletedTask;
+
+        Task Load(Chunk c, long sector)
         {
-            ct.ThrowIfCancellationRequested();
-            c.Count = (int)Math.Min(ChunkSectors, sectorCount - sector);
-            c.Bytes = c.Count * SectorSize;
-            image.ReadExactly(sector * SectorSize, c.Raw.AsSpan(0, c.Bytes));
-            if (encoder is not null)
+            var read = reads.ContinueWith(previous =>
             {
+                previous.GetAwaiter().GetResult(); // a failed read stops the ones after it
+                ct.ThrowIfCancellationRequested();
+                c.Count = (int)Math.Min(ChunkSectors, sectorCount - sector);
+                c.Bytes = c.Count * SectorSize;
+                image.ReadExactly(sector * SectorSize, c.Raw.AsSpan(0, c.Bytes));
+            }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+            reads = read;
+            if (encoder is null)
+            {
+                return read;
+            }
+            return read.ContinueWith(loaded =>
+            {
+                loaded.GetAwaiter().GetResult();
+                ct.ThrowIfCancellationRequested();
                 Parallel.For(0, c.Count, () => new byte[Lz4Block.MaxCompressedLength(SectorSize)], (i, _, scratch) =>
                 {
                     c.Lengths[i] = encoder(c.Raw.AsSpan(i * SectorSize, SectorSize), scratch, c.Blocks.AsSpan(i * MaxBlock, MaxBlock));
                     return scratch;
                 }, _ => { });
-            }
-        });
+            }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+        }
 
         try
         {
-            Chunk current = a, next = b;
-            long sector = 0;
-            pending = Load(current, 0);
-            while (true)
+            long next = 0;
+            for (int i = 0; i < depth; i++)
             {
-                pending.GetAwaiter().GetResult();
-                pending = null;
-                long first = sector;
-                sector += current.Count;
-                if (sector < sectorCount)
+                chunks[i] = new Chunk(encoder is not null);
+                if (next < sectorCount)
                 {
-                    pending = Load(next, sector);
+                    ready[i] = Load(chunks[i], next);
+                    next += ChunkSectors;
                 }
+            }
+
+            long sector = 0;
+            for (int slot = 0; sector < sectorCount; slot = (slot + 1) % depth)
+            {
+                ready[slot]!.GetAwaiter().GetResult();
+                ready[slot] = null;
                 ct.ThrowIfCancellationRequested();
-                consume(current, first);
-                if (pending is null)
+                var current = chunks[slot];
+                consume(current, sector);
+                sector += current.Count;
+                if (next < sectorCount)
                 {
-                    break;
+                    ready[slot] = Load(current, next);
+                    next += ChunkSectors;
                 }
-                (current, next) = (next, current);
             }
         }
         finally
         {
-            // The worker may still be filling a buffer; wait before the buffers go back to the pool.
-            if (pending is not null)
+            // Workers may still be filling buffers; wait before the buffers go back to the pool.
+            foreach (var t in ready)
             {
                 try
                 {
-                    pending.Wait();
+                    t?.Wait();
                 }
                 catch (AggregateException)
                 {
                     // Already failing or cancelled; the original exception is the one that matters.
                 }
+            }
+            foreach (var c in chunks)
+            {
+                c?.Dispose();
             }
         }
     }

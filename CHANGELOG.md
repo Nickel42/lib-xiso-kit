@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 1.0.0-rc.3
 
 ### Added
 - **Xbox 360 packages:** `LibXisoKit.Stfs`. `StfsHeader` reads CON, LIVE and PIRS headers (content type, title ID, media ID, version, names, STFS or SVOD). `StfsPackage` lists, reads and extracts the files of an STFS package (XBLA games, DLC, title updates), with one or two copies of each hash table and up to three table levels, and `Verify` checks the whole hash tree. Games on Demand (SVOD) packages open for their header only.

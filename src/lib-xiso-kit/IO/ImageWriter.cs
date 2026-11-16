@@ -244,7 +244,7 @@ public static class ImageWriter
 
     private static WriteResult WriteIso(ImageSource image, string outputPath, long? splitSize, bool overwrite, LogicalHash sha, IProgress<OperationProgress> progress, CancellationToken ct)
     {
-        using var writer = new SplitFileWriter(outputPath, splitSize, overwrite);
+        using var writer = new SplitFileWriter(outputPath, splitSize, overwrite, image.Length);
         ForEachChunk(image, null, ct, (c, sector) =>
         {
             long pos = sector * SectorSize;

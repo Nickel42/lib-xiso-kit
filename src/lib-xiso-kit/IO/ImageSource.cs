@@ -128,7 +128,8 @@ public sealed class ConcatenatedFileSource : ImageSource
         {
             for (int i = 0; i < files.Count; i++)
             {
-                _handles[i] = File.OpenHandle(files[i], FileMode.Open, FileAccess.Read, FileShare.Read, FileOptions.RandomAccess);
+                // Default options keep the OS read-ahead: the writer, verify and file streams all read front to back.
+                _handles[i] = File.OpenHandle(files[i], FileMode.Open, FileAccess.Read, FileShare.Read);
                 _starts[i] = pos;
                 _lengths[i] = RandomAccess.GetLength(_handles[i]);
                 pos += _lengths[i];

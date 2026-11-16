@@ -132,7 +132,7 @@ public sealed class CciSource : ImageSource
             Span<byte> header = stackalloc byte[32];
             foreach (var file in files)
             {
-                var handle = File.OpenHandle(file, FileMode.Open, FileAccess.Read, FileShare.Read, FileOptions.RandomAccess);
+                var handle = File.OpenHandle(file, FileMode.Open, FileAccess.Read, FileShare.Read); // keeps OS read-ahead
                 try
                 {
                     if (RandomAccess.Read(handle, header, 0) != 32)

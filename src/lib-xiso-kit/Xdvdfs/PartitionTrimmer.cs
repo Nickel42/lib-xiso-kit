@@ -3,7 +3,7 @@ using LibXisoKit.Xbe;
 
 namespace LibXisoKit.Xdvdfs;
 
-/// <summary>Result of <see cref="PartitionTrimmer.Build"/>.</summary>
+/// <summary>Result of <see cref="PartitionTrimmer.Build(XdvdfsVolume, bool, bool)"/>.</summary>
 public sealed record TrimResult(VirtualImage Image, long ScrubbedBytes, int PatchedExecutables);
 
 /// <summary>
@@ -14,10 +14,17 @@ public sealed record TrimResult(VirtualImage Image, long ScrubbedBytes, int Patc
 /// </summary>
 public static class PartitionTrimmer
 {
-    public static TrimResult Build(XdvdfsVolume volume, bool scrub, bool mediaPatch)
+    public static TrimResult Build(XdvdfsVolume volume, bool scrub, bool mediaPatch) => Build(volume, volume.Source, scrub, mediaPatch);
+
+    /// <summary>
+    /// As <see cref="Build(XdvdfsVolume, bool, bool)"/>, but the copied data is read through <paramref name="source"/>,
+    /// which must present the same bytes as <c>volume.Source</c> (e.g. a <see cref="HashingTeeSource"/> over it).
+    /// </summary>
+    internal static TrimResult Build(XdvdfsVolume volume, ImageSource source, bool scrub, bool mediaPatch)
     {
         long endSector = volume.UsedEndSector;
         var partition = new SubrangeSource(volume.Source, volume.PartitionOffset, volume.PartitionLength);
+        var copyFrom = ReferenceEquals(source, volume.Source) ? partition : new SubrangeSource(source, volume.PartitionOffset, volume.PartitionLength);
 
         // 1. Sector intervals that must be copied.
         var used = new List<(long Start, long End)>();
@@ -89,13 +96,13 @@ public static class PartitionTrimmer
                 }
                 if (sp.Start > s)
                 {
-                    AddCopy(builder, partition, s, sp.Start);
+                    AddCopy(builder, copyFrom, s, sp.Start);
                 }
                 s = Math.Max(s, sp.End);
             }
             if (s < end)
             {
-                AddCopy(builder, partition, s, end);
+                AddCopy(builder, copyFrom, s, end);
             }
             scrubbed -= (end - start) * XdvdfsConstants.SectorSize;
         }

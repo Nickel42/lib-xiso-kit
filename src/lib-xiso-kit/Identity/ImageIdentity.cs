@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Numerics;
 using System.Security.Cryptography;
 using System.Xml;
 using System.Xml.Linq;
@@ -64,6 +65,114 @@ public sealed class Crc32
         var c = new Crc32();
         c.Append(data);
         return c.Value;
+    }
+}
+
+/// <summary>
+/// XXH64 (seed 0), a fast non-cryptographic checksum. Used to confirm that a written image reads back as written;
+/// it runs several times faster than SHA-1, so verification is bound by reading rather than hashing.
+/// </summary>
+internal sealed class XxHash64
+{
+    private const ulong P1 = 0x9E3779B185EBCA87UL;
+    private const ulong P2 = 0xC2B2AE3D27D4EB4FUL;
+    private const ulong P3 = 0x165667B19E3779F9UL;
+    private const ulong P4 = 0x85EBCA77C2B2AE63UL;
+    private const ulong P5 = 0x27D4EB2F165667C5UL;
+
+    private ulong _v1 = unchecked(P1 + P2);
+    private ulong _v2 = P2;
+    private ulong _v3;
+    private ulong _v4 = unchecked(0 - P1);
+    private readonly byte[] _pending = new byte[32];
+    private int _pendingLength;
+    private long _total;
+
+    private static ulong Round(ulong acc, ulong input) => BitOperations.RotateLeft(acc + input * P2, 31) * P1;
+
+    private static ulong Merge(ulong acc, ulong v) => ((acc ^ Round(0, v)) * P1) + P4;
+
+    public void Append(ReadOnlySpan<byte> data)
+    {
+        _total += data.Length;
+        if (_pendingLength > 0)
+        {
+            int take = Math.Min(32 - _pendingLength, data.Length);
+            data[..take].CopyTo(_pending.AsSpan(_pendingLength));
+            _pendingLength += take;
+            data = data[take..];
+            if (_pendingLength < 32)
+            {
+                return;
+            }
+            Stripes(_pending);
+            _pendingLength = 0;
+        }
+        int whole = data.Length & ~31;
+        Stripes(data[..whole]);
+        data[whole..].CopyTo(_pending);
+        _pendingLength = data.Length - whole;
+    }
+
+    /// <summary>Consumes 32-byte stripes; <paramref name="data"/> length is a multiple of 32.</summary>
+    private void Stripes(ReadOnlySpan<byte> data)
+    {
+        ulong v1 = _v1, v2 = _v2, v3 = _v3, v4 = _v4;
+        for (int i = 0; i < data.Length; i += 32)
+        {
+            v1 = Round(v1, BinaryPrimitives.ReadUInt64LittleEndian(data[i..]));
+            v2 = Round(v2, BinaryPrimitives.ReadUInt64LittleEndian(data[(i + 8)..]));
+            v3 = Round(v3, BinaryPrimitives.ReadUInt64LittleEndian(data[(i + 16)..]));
+            v4 = Round(v4, BinaryPrimitives.ReadUInt64LittleEndian(data[(i + 24)..]));
+        }
+        (_v1, _v2, _v3, _v4) = (v1, v2, v3, v4);
+    }
+
+    public ulong Digest()
+    {
+        ulong h;
+        if (_total >= 32)
+        {
+            h = BitOperations.RotateLeft(_v1, 1) + BitOperations.RotateLeft(_v2, 7) + BitOperations.RotateLeft(_v3, 12) + BitOperations.RotateLeft(_v4, 18);
+            h = Merge(h, _v1);
+            h = Merge(h, _v2);
+            h = Merge(h, _v3);
+            h = Merge(h, _v4);
+        }
+        else
+        {
+            h = P5;
+        }
+        h += (ulong)_total;
+
+        var tail = _pending.AsSpan(0, _pendingLength);
+        for (; tail.Length >= 8; tail = tail[8..])
+        {
+            h = (BitOperations.RotateLeft(h ^ Round(0, BinaryPrimitives.ReadUInt64LittleEndian(tail)), 27) * P1) + P4;
+        }
+        if (tail.Length >= 4)
+        {
+            h = (BitOperations.RotateLeft(h ^ (BinaryPrimitives.ReadUInt32LittleEndian(tail) * P1), 23) * P2) + P3;
+            tail = tail[4..];
+        }
+        foreach (byte b in tail)
+        {
+            h = BitOperations.RotateLeft(h ^ (b * P5), 11) * P1;
+        }
+
+        h ^= h >> 33;
+        h *= P2;
+        h ^= h >> 29;
+        h *= P3;
+        h ^= h >> 32;
+        return h;
+    }
+
+    public static ulong Compute(ReadOnlySpan<byte> data)
+    {
+        var x = new XxHash64();
+        x.Append(data);
+        return x.Digest();
     }
 }
 

@@ -11,18 +11,22 @@ internal sealed class SplitFileWriter : IDisposable
 {
     private readonly string _outputPath;
     private readonly long? _partSize;
+    private readonly long _expectedLength;
     private readonly List<SafeFileHandle> _handles = new();
     private readonly List<string> _paths = new();
     private bool _completed;
 
-    public SplitFileWriter(string outputPath, long? partSize, bool overwrite)
+    public SplitFileWriter(string outputPath, long? partSize, bool overwrite, long expectedLength = 0)
     {
+        // expectedLength: the final logical length when known up front (0 when not). Each part's disk space is
+        // then reserved as it is created, instead of the file growing (and fragmenting) 4 MiB at a time.
         if (partSize is <= 0 || (partSize is { } p && p % 2048 != 0))
         {
             throw new ArgumentException("Split size must be a positive multiple of 2048.", nameof(partSize));
         }
         _outputPath = Path.GetFullPath(outputPath);
         _partSize = partSize;
+        _expectedLength = expectedLength;
         Directory.CreateDirectory(Path.GetDirectoryName(_outputPath)!);
         PrepareTargets(_outputPath, partSize is not null, overwrite);
     }
@@ -89,7 +93,8 @@ internal sealed class SplitFileWriter : IDisposable
         {
             int index = _handles.Count;
             string path = _partSize is null ? _outputPath : SplitParts.PartPath(_outputPath, index + 1);
-            _handles.Add(File.OpenHandle(path, FileMode.CreateNew, FileAccess.Write, FileShare.None));
+            long reserve = _partSize is { } size ? Math.Min(size, _expectedLength - index * size) : _expectedLength;
+            _handles.Add(File.OpenHandle(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, FileOptions.None, Math.Max(0, reserve)));
             _paths.Add(path);
         }
         return _handles[part];

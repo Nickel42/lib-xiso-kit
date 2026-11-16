@@ -15,6 +15,17 @@ public static class Lz4Block
     private const int MaxDistance = 65535;
     private const int HashLog = 12;
 
+    /// <summary>
+    /// Per-thread match table, reused across calls instead of clearing 16 KiB per sector. Entries store
+    /// <c>position + base + 1</c>; anything at or below the current call's base was left by an earlier call
+    /// and counts as empty, exactly like the zeroed table it replaces.
+    /// </summary>
+    [ThreadStatic]
+    private static int[]? t_table;
+
+    [ThreadStatic]
+    private static int t_base;
+
     /// <summary>Worst-case compressed size for an input of <paramref name="inputLength"/> bytes.</summary>
     public static int MaxCompressedLength(int inputLength) => inputLength + (inputLength / 255) + 16;
 
@@ -31,8 +42,14 @@ public static class Lz4Block
             return w.EmitLastLiterals(source, 0) ? w.Position : -1;
         }
 
-        Span<int> table = stackalloc int[1 << HashLog]; // stores position + 1, 0 = empty
-        table.Clear();
+        int[] table = t_table ??= new int[1 << HashLog];
+        int tableBase = t_base;
+        if (tableBase > int.MaxValue - n - 1)
+        {
+            Array.Clear(table);
+            tableBase = 0;
+        }
+        t_base = tableBase + n;
 
         int anchor = 0;
         int ip = 0;
@@ -43,17 +60,14 @@ public static class Lz4Block
         {
             uint seq = BinaryPrimitives.ReadUInt32LittleEndian(source.Slice(ip, 4));
             int h = (int)((seq * 2654435761u) >> (32 - HashLog));
-            int candidate = table[h] - 1;
-            table[h] = ip + 1;
+            int stored = table[h];
+            int candidate = stored > tableBase ? stored - tableBase - 1 : -1;
+            table[h] = ip + tableBase + 1;
 
             if (candidate >= 0 && ip - candidate <= MaxDistance &&
                 BinaryPrimitives.ReadUInt32LittleEndian(source.Slice(candidate, 4)) == seq)
             {
-                int matchLen = MinMatch;
-                while (ip + matchLen < matchLimit && source[candidate + matchLen] == source[ip + matchLen])
-                {
-                    matchLen++;
-                }
+                int matchLen = MinMatch + source[(ip + MinMatch)..matchLimit].CommonPrefixLength(source[(candidate + MinMatch)..]);
 
                 while (ip > anchor && candidate > 0 && source[ip - 1] == source[candidate - 1])
                 {

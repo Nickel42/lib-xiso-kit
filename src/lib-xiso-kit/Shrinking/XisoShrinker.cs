@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using LibXisoKit.Analysis;
@@ -191,10 +190,14 @@ public sealed class XisoShrinker : IDisposable
             throw new InvalidOperationException("Trim-only mode cannot remove or deduplicate files. Use ShrinkMode.Rebuild.");
         }
 
-        // 1. Identity of the untouched source.
+        // 1. Identity of the untouched source. A trim reads a plain image front to back, so it hashes the
+        //    source as it goes (one pass over the disc); anything else hashes it up front.
         FileHashes? hashes = null;
         DatEntry? datMatch = null;
-        if (options.HashSource || options.Dat is not null)
+        using var tee = (options.HashSource || options.Dat is not null) && mode == ShrinkMode.TrimOnly && Volume.Source is ConcatenatedFileSource
+            ? new HashingTeeSource(Volume.Source, cancellationToken)
+            : null;
+        if ((options.HashSource || options.Dat is not null) && tee is null)
         {
             hashes = FileHashes.Compute(Volume.Source.Files, progress, cancellationToken);
             datMatch = options.Dat?.Match(hashes);
@@ -232,7 +235,7 @@ public sealed class XisoShrinker : IDisposable
         }
         else
         {
-            var trim = PartitionTrimmer.Build(Volume, options.Scrub, options.MediaPatch);
+            var trim = PartitionTrimmer.Build(Volume, tee ?? Volume.Source, options.Scrub, options.MediaPatch);
             image = trim.Image;
             patched = trim.PatchedExecutables;
             scrubbed = trim.ScrubbedBytes;
@@ -240,15 +243,24 @@ public sealed class XisoShrinker : IDisposable
         }
 
         // 3. Write.
-        var write = ImageWriter.Write(image, fullOutput, options.Format, options.SplitSize, options.Overwrite, progress, cancellationToken);
+        bool fastVerify = options.Verify && options.FastVerify;
+        var write = ImageWriter.Write(image, fullOutput, options.Format, options.SplitSize, options.Overwrite, fastVerify, progress, cancellationToken);
 
         try
         {
+            if (tee is not null)
+            {
+                hashes = tee.Finish(progress);
+                datMatch = options.Dat?.Match(hashes);
+            }
+
             // 4. Verify.
             VerifyResult? verify = null;
             if (options.Verify)
             {
-                verify = VerifyImage(write.Files[0], write.LogicalSha1, expectedFiles, progress, cancellationToken);
+                verify = fastVerify
+                    ? VerifyImage(write.Files[0], null, write.LogicalXxHash64, expectedFiles, progress, cancellationToken, hashImage: false)
+                    : VerifyImage(write.Files[0], write.LogicalSha1, expectedFiles, progress, cancellationToken);
                 if (!verify.Success)
                 {
                     throw new InvalidDataException("Verification of the written image failed: " + string.Join("; ", verify.Problems));
@@ -407,7 +419,18 @@ public sealed class XisoShrinker : IDisposable
         int? expectedFileCount = null,
         IProgress<OperationProgress>? progress = null,
         CancellationToken cancellationToken = default,
-        bool hashImage = false)
+        bool hashImage = false) =>
+        VerifyImage(path, expectedLogicalSha1, null, expectedFileCount, progress, cancellationToken, hashImage);
+
+    /// <summary>As the public overload; <paramref name="expectedXxHash64"/> checks the image with XXH64 instead of SHA-1.</summary>
+    internal static VerifyResult VerifyImage(
+        string path,
+        string? expectedLogicalSha1,
+        ulong? expectedXxHash64,
+        int? expectedFileCount,
+        IProgress<OperationProgress>? progress,
+        CancellationToken cancellationToken,
+        bool hashImage)
     {
         var problems = new List<string>();
         string? sha1 = null;
@@ -435,29 +458,19 @@ public sealed class XisoShrinker : IDisposable
                 problems.Add("/default.xbe is missing or invalid.");
             }
 
+            if (expectedXxHash64 is { } expectedXx)
+            {
+                var xx = new XxHash64();
+                ImageHashing.Stream(volume.Source, (b, n) => xx.Append(b.AsSpan(0, n)), OperationStage.Verifying, progress, cancellationToken);
+                if (xx.Digest() != expectedXx)
+                {
+                    problems.Add("Image contents differ from what was written (checksum mismatch).");
+                }
+            }
             if (expectedLogicalSha1 is not null || hashImage)
             {
-                var throttled = new ThrottledProgress(progress);
                 using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
-                byte[] buffer = ArrayPool<byte>.Shared.Rent(4 << 20);
-                try
-                {
-                    long pos = 0;
-                    long len = volume.Source.Length;
-                    while (pos < len)
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        int want = (int)Math.Min(buffer.Length, len - pos);
-                        volume.Source.ReadExactly(pos, buffer.AsSpan(0, want));
-                        hash.AppendData(buffer, 0, want);
-                        pos += want;
-                        throttled.Report(new OperationProgress(OperationStage.Verifying, pos, len));
-                    }
-                }
-                finally
-                {
-                    ArrayPool<byte>.Shared.Return(buffer);
-                }
+                ImageHashing.Stream(volume.Source, (b, n) => hash.AppendData(b, 0, n), OperationStage.Verifying, progress, cancellationToken);
                 sha1 = Convert.ToHexString(hash.GetHashAndReset());
                 if (expectedLogicalSha1 is not null && !string.Equals(sha1, expectedLogicalSha1, StringComparison.OrdinalIgnoreCase))
                 {

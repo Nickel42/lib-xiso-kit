@@ -183,6 +183,71 @@ public sealed class ImageTests : IDisposable
     }
 }
 
+public sealed class FastPathTests : IDisposable
+{
+    private readonly string _dir = Path.Combine(Path.GetTempPath(), "xiso-kit-tests-" + Guid.NewGuid().ToString("N"));
+
+    public FastPathTests() => Directory.CreateDirectory(_dir);
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_dir, true); } catch (IOException) { }
+    }
+
+    /// <summary>A split XISO with random data appended to its last part, so the tail past the used area counts.</summary>
+    private string[] SplitSourceWithTail()
+    {
+        string tree = TestImages.CreateTree(Path.Combine(_dir, "tree"));
+        var packed = XisoShrinker.PackFolder(tree, Path.Combine(_dir, "src.iso"), OutputFormat.Iso, new XisoBuildOptions { MediaPatch = false }, splitSize: 64 * 2048);
+        var tail = new byte[3 * 2048 + 100];
+        new Random(5).NextBytes(tail);
+        using (var fs = new FileStream(packed.Files[^1], FileMode.Append))
+        {
+            fs.Write(tail);
+        }
+        return packed.Files.ToArray();
+    }
+
+    [Theory]
+    [InlineData(OutputFormat.Iso, true)]
+    [InlineData(OutputFormat.Cci, false)]
+    public void TrimHashesSourceWhileWriting(OutputFormat format, bool mediaPatch)
+    {
+        var parts = SplitSourceWithTail();
+        var expected = FileHashes.Compute(parts);
+
+        using var shrinker = XisoShrinker.Open(parts[0]);
+        var plan = shrinker.CreatePlan(shrinker.Analyze(), new ShrinkOptions
+        {
+            Mode = ShrinkMode.TrimOnly, RemoveSystemUpdate = false, MediaPatch = mediaPatch, Format = format, HashSource = true,
+        });
+        var result = shrinker.Execute(plan, Path.Combine(_dir, "out" + ImageWriter.ExtensionFor(format)));
+
+        Assert.Equal(expected, result.SourceHashes);
+        Assert.True(result.Verification!.Success);
+        Assert.Equal(mediaPatch, result.PatchedExecutables > 0);
+    }
+
+    [Fact]
+    public void TeeHashesEveryByteOnceWhateverTheReadOrder()
+    {
+        var parts = SplitSourceWithTail();
+        var expected = FileHashes.Compute(parts);
+        using var inner = new ConcatenatedFileSource(parts);
+        using var tee = new HashingTeeSource(inner, CancellationToken.None);
+        var rng = new Random(3);
+        long[] starts = { 4096, 0, 70_000, 69_000, inner.Length - 5000, 10, inner.Length + 10 };
+        foreach (long start in starts)
+        {
+            var got = new byte[rng.Next(1, 300_000)];
+            var want = new byte[got.Length];
+            Assert.Equal(inner.Read(start, want), tee.Read(start, got));
+            Assert.Equal(want, got);
+        }
+        Assert.Equal(expected, tee.Finish(null));
+    }
+}
+
 internal static class TestImages
 {
     public static string CreateTree(string root)

@@ -190,10 +190,14 @@ public sealed class XisoShrinker : IDisposable
             throw new InvalidOperationException("Trim-only mode cannot remove or deduplicate files. Use ShrinkMode.Rebuild.");
         }
 
-        // 1. Identity of the untouched source.
+        // 1. Identity of the untouched source. A trim reads a plain image front to back, so it hashes the
+        //    source as it goes (one pass over the disc); anything else hashes it up front.
         FileHashes? hashes = null;
         DatEntry? datMatch = null;
-        if (options.HashSource || options.Dat is not null)
+        using var tee = (options.HashSource || options.Dat is not null) && mode == ShrinkMode.TrimOnly && Volume.Source is ConcatenatedFileSource
+            ? new HashingTeeSource(Volume.Source, cancellationToken)
+            : null;
+        if ((options.HashSource || options.Dat is not null) && tee is null)
         {
             hashes = FileHashes.Compute(Volume.Source.Files, progress, cancellationToken);
             datMatch = options.Dat?.Match(hashes);
@@ -231,7 +235,7 @@ public sealed class XisoShrinker : IDisposable
         }
         else
         {
-            var trim = PartitionTrimmer.Build(Volume, options.Scrub, options.MediaPatch);
+            var trim = PartitionTrimmer.Build(Volume, tee ?? Volume.Source, options.Scrub, options.MediaPatch);
             image = trim.Image;
             patched = trim.PatchedExecutables;
             scrubbed = trim.ScrubbedBytes;
@@ -243,6 +247,12 @@ public sealed class XisoShrinker : IDisposable
 
         try
         {
+            if (tee is not null)
+            {
+                hashes = tee.Finish(progress);
+                datMatch = options.Dat?.Match(hashes);
+            }
+
             // 4. Verify.
             VerifyResult? verify = null;
             if (options.Verify)

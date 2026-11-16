@@ -405,6 +405,20 @@ public sealed class FastPathTests : IDisposable
         }
         Assert.Equal(expected, tee.Finish(null));
     }
+
+    [Fact]
+    public void TeeStopsOnCancellationAndDisposes()
+    {
+        var parts = SplitSourceWithTail();
+        using var inner = new ConcatenatedFileSource(parts);
+        using var cts = new CancellationTokenSource();
+        var tee = new HashingTeeSource(inner, cts.Token);
+        tee.Read(0, new byte[4096]);
+        cts.Cancel();
+        Assert.ThrowsAny<OperationCanceledException>(() => tee.Read(inner.Length - 2048, new byte[2048]));
+        Assert.ThrowsAny<OperationCanceledException>(() => tee.Finish(null));
+        Assert.True(Task.Run(tee.Dispose).Wait(TimeSpan.FromSeconds(10)), "Dispose hung after cancellation.");
+    }
 }
 
 internal static class TestImages

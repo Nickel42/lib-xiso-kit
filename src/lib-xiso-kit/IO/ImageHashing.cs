@@ -69,6 +69,7 @@ internal sealed class HashingTeeSource : ImageSource
     private readonly ImageSource _inner;
     private readonly object _gate = new();
     private readonly BlockingCollection<(byte[] Buffer, int Length)> _queue = new(boundedCapacity: 3);
+    private readonly CancellationToken _callerToken;
     private readonly CancellationTokenSource _stop;
     private readonly Crc32 _crc = new();
     private readonly IncrementalHash _md5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
@@ -80,6 +81,7 @@ internal sealed class HashingTeeSource : ImageSource
     public HashingTeeSource(ImageSource inner, CancellationToken cancellationToken)
     {
         _inner = inner;
+        _callerToken = cancellationToken;
         _stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         Files = inner.Files;
         _worker = Task.Factory.StartNew(Consume, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
@@ -180,9 +182,11 @@ internal sealed class HashingTeeSource : ImageSource
         catch (Exception ex)
         {
             ArrayPool<byte>.Shared.Return(block);
-            if (ex is OperationCanceledException && _worker.IsFaulted)
+            // _stop fires for the caller's cancellation or a hashing failure. The worker cancels _stop just before
+            // its task turns Faulted, so when the caller did not cancel, wait for it and surface its exception.
+            if (ex is OperationCanceledException && !_callerToken.IsCancellationRequested)
             {
-                _worker.GetAwaiter().GetResult(); // surface the hashing failure, not the cancellation
+                _worker.GetAwaiter().GetResult();
             }
             throw;
         }
